@@ -1,0 +1,249 @@
+"""
+Excel出力生成器
+"""
+import openpyxl
+from openpyxl.styles import PatternFill, Alignment, Font, Border, Side
+from typing import Dict, List
+from datetime import date
+import calendar
+from .models.staff import Staff
+
+class ExcelGenerator:
+    """勤務表Excel生成"""
+    
+    def __init__(
+        self,
+        year: int,
+        month: int,
+        technicians: List[Staff],
+        night_assignments: Dict[int, List[str]],
+        day_assignments: Dict[int, Dict[str, List[str]]],
+        requests: Dict[int, Dict[str, str]], # {day: {staff_id: symbol}}
+        name_mapper
+    ):
+        self.year = year
+        self.month = month
+        self.technicians = technicians
+        self.night_assignments = night_assignments
+        self.day_assignments = day_assignments
+        self.requests = requests
+        self.name_mapper = name_mapper
+        
+        self.days_in_month = calendar.monthrange(year, month)[1]
+        
+        # ワークブック作成
+        self.wb = openpyxl.Workbook()
+        self.ws = self.wb.active
+        self.ws.title = f"{month}月勤務表"
+    
+    def generate(self, output_path: str):
+        """Excel生成"""
+        self._create_header()
+        self._create_day_header()
+        self._create_weekday_row()
+        self._fill_assignments()
+        self._apply_formatting()
+        
+        self.wb.save(output_path)
+        print(f"✓ 勤務表を保存: {output_path}")
+    
+    def _create_header(self):
+        """タイトル行"""
+        self.ws['A1'] = f"画 像 診 断 室  {self.year}年 {self.month}月 勤 務 分 担 表"
+        self.ws.merge_cells('A1:AH1')
+        self.ws['A1'].alignment = Alignment(horizontal='center')
+        self.ws['A1'].font = Font(size=14, bold=True)
+    
+    def _day_to_column(self, day: int) -> str:
+        """日付を列名に変換（1→C, 2→D, ...）"""
+        col_num = day + 2  # A=勤務表番号, B=技師名, C=1日
+        return openpyxl.utils.get_column_letter(col_num)
+
+    def _create_day_header(self):
+        """日付ヘッダー"""
+        self.ws['A2'] = '勤務表番号'
+        self.ws['B2'] = '技師名'
+        self.ws['B2'].fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+        self.ws['B2'].font = Font(bold=True, color='FFFFFF')
+        
+        for day in range(1, self.days_in_month + 1):
+            col = self._day_to_column(day)
+            self.ws[f'{col}2'] = f'{day:02d}'
+            self.ws[f'{col}2'].alignment = Alignment(horizontal='center')
+            self.ws[f'{col}2'].fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+            self.ws[f'{col}2'].font = Font(bold=True, color='FFFFFF')
+
+        # Stats Header
+        stats_start_col = self.days_in_month + 3
+        self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+        
+        for i, label in enumerate(self.stats_columns):
+            col_idx = stats_start_col + i
+            col_letter = openpyxl.utils.get_column_letter(col_idx)
+            self.ws[f'{col_letter}2'] = label
+            self.ws[f'{col_letter}2'].fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+            self.ws[f'{col_letter}2'].font = Font(bold=True, color='FFFFFF')
+            self.ws[f'{col_letter}2'].alignment = Alignment(horizontal='center')
+
+    def _create_weekday_row(self):
+        """曜日行"""
+        self.ws['B3'] = '曜日'
+        
+        weekday_names = ['月', '火', '水', '木', '金', '土', '日']
+        
+        for day in range(1, self.days_in_month + 1):
+            d = date(self.year, self.month, day)
+            weekday = weekday_names[d.weekday()]
+            
+            col = self._day_to_column(day)
+            self.ws[f'{col}3'] = weekday
+            self.ws[f'{col}3'].alignment = Alignment(horizontal='center')
+
+
+    def _fill_assignments(self):
+        """配置を記入"""
+        row = 4
+        
+        for tech in sorted(self.technicians, key=lambda t: t.id):
+            if tech.status != '在籍':
+                continue
+            
+            # 技師番号・氏名
+            try:
+                tech_num = int(tech.id.replace('T', ''))
+            except:
+                tech_num = tech.id
+                
+            self.ws[f'A{row}'] = tech_num
+            self.ws[f'B{row}'] = tech.name
+            
+            # カウンター初期化
+            if not hasattr(self, 'stats_columns'):
+                self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+            counts = {label: 0 for label in self.stats_columns}
+            
+            # 各日の配置
+            for day in range(1, self.days_in_month + 1):
+                col = self._day_to_column(day)
+                cell_value = self._get_assignment_text(tech.id, day)
+                self.ws[f'{col}{row}'] = cell_value
+                self.ws[f'{col}{row}'].alignment = Alignment(horizontal='center')
+                
+                # 色分け
+                fill = self._get_cell_fill(tech.id, day, cell_value)
+                if fill:
+                    self.ws[f'{col}{row}'].fill = fill
+                
+                # 統計カウント
+                if '夜' in cell_value:
+                    counts['夜勤'] += 1
+                
+                # 日勤カウント (cell_value might be "CT", "CT/夜", "入")
+                # Split by '/' if composite
+                parts = cell_value.split('/')
+                for p in parts:
+                    if p in counts:
+                        counts[p] += 1
+            
+            # 統計出力
+            stats_start_col = self.days_in_month + 3
+            for i, label in enumerate(self.stats_columns):
+                col_idx = stats_start_col + i
+                col_letter = openpyxl.utils.get_column_letter(col_idx)
+                self.ws[f'{col_letter}{row}'] = counts[label]
+                self.ws[f'{col_letter}{row}'].alignment = Alignment(horizontal='center')
+
+            row += 1
+
+    def _get_assignment_text(self, tech_id: str, day: int) -> str:
+        """配置テキストを取得"""
+        parts = []
+        
+        # 日勤配置
+        if day in self.day_assignments:
+            for loc_code, tech_ids in self.day_assignments[day].items():
+                if tech_id in tech_ids:
+                    parts.append(loc_code)
+        
+        # 夜勤
+        if day in self.night_assignments:
+            if tech_id in self.night_assignments[day]:
+                if parts:
+                    parts[0] += '夜'
+                else:
+                    parts.append('夜')
+        
+        # 明け
+        if day > 1 and (day - 1) in self.night_assignments:
+            if tech_id in self.night_assignments[day - 1]:
+                return '○'
+        
+        # Visualizing Requests (User Requirement)
+        req_symbol = ""
+        if day in self.requests and tech_id in self.requests[day]:
+             req_symbol = self.requests[day][tech_id]
+             
+        # If Night Request matches Assignment, append (希)
+        if req_symbol == '夜希':
+             # Find the part with '夜' and mark it
+             for i, p in enumerate(parts):
+                  if '夜' in p:
+                      parts[i] = p + '(希)'
+
+        # Fix: Ensure 17業/17休 is reflected
+        if req_symbol in ['17業', '17休']:
+            # append to list effectively
+            parts.append(req_symbol)
+        
+        # 割り当てがない場合、申請を表示
+        if not parts:
+            if req_symbol:
+                return req_symbol
+        
+        return '/'.join(parts) if parts else ''
+    
+    def _get_cell_fill(self, tech_id: str, day: int, cell_value: str) -> PatternFill:
+        """セルの背景色を取得"""
+        if '夜' in cell_value:
+            return PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+        if cell_value == '○':
+            return PatternFill(start_color='FFC0CB', end_color='FFC0CB', fill_type='solid')
+        if cell_value in ['★', '☆', '◆']:
+            return PatternFill(start_color='FFCDD2', end_color='FFCDD2', fill_type='solid')
+        if cell_value == '休':
+            # Enforced Holiday (Grey)
+            return PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
+        return None
+
+    def _apply_formatting(self):
+        """書式設定"""
+        # 罫線
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        if not hasattr(self, 'stats_columns'):
+             self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+             
+        max_col = self.days_in_month + 2 + len(self.stats_columns) # +2 for ID, Name
+        
+        for row in self.ws.iter_rows(min_row=2, max_row=self.ws.max_row,
+                                       min_col=1, max_col=max_col):
+            for cell in row:
+                cell.border = thin_border
+        
+        # 列幅調整
+        self.ws.column_dimensions['A'].width = 8
+        self.ws.column_dimensions['B'].width = 15
+        for day in range(1, self.days_in_month + 1):
+            col = self._day_to_column(day)
+            self.ws.column_dimensions[col].width = 4 # Narrow for days
+            
+        # Stats width
+        stats_start_col = self.days_in_month + 3
+        for i in range(len(self.stats_columns)):
+             col_letter = openpyxl.utils.get_column_letter(stats_start_col + i)
+             self.ws.column_dimensions[col_letter].width = 4

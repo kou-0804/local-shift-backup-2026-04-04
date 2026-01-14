@@ -1,0 +1,22 @@
+data_dir: ./data
+output_dir: ./output
+
+solver:
+  timeout_seconds: 300
+  num_workers: 4
+
+night_shift:
+  staff_count: 3
+  min_interval_days: 3
+  
+weights:
+  week_distribution: 100
+  holiday_distribution: 50
+  saturday_distribution: 50
+  workload_balance: 50
+  consecutive_placement: 10
+
+output:
+  excel_enabled: true
+  csv_enabled: true
+  report_enabled: true
