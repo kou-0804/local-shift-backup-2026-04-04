@@ -9,7 +9,7 @@ def load_config(config_path: str) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description='Radiological Technologist Shift Scheduler')
-    parser.add_argument('--month', type=str, require=True, help='Target month (YYYY-MM)')
+    parser.add_argument('--month', type=str, required=True, help='Target month (YYYY-MM)')
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to config file')
     args = parser.parse_args()
 

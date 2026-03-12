@@ -64,7 +64,7 @@ class NightScheduler:
         # 4. Solve
 
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 300
+        solver.parameters.max_time_in_seconds = 60  # 最大60秒（以前は300秒）
         # Enable search logging
         solver.parameters.log_search_progress = True
         
@@ -382,31 +382,55 @@ class NightScheduler:
                 model.Add(var >= count - 1)
                 penalties.append(var * WEIGHT_WEEK)
 
-        # NS-02: Sunday/Holiday Distribution (Weight 50)
-        # Balance the number of Sunday/Holiday night shifts
-        WEIGHT_HOLIDAY = 50
+        # NS-02: Sunday/Holiday Distribution — Hard + Incremental Penalty
+        # 日祝日の当直回数をスタッフ間で極力均等化
         holidays = [d for d in self.dates if d.weekday() == 6 or jpholiday.is_holiday(d)]
         
         if holidays:
-             # Target average
             total_slots = len(holidays) * 3
-            avg = total_slots // len(self.night_staff)
+            num_staff = len(self.night_staff)
+            max_per_person = (total_slots + num_staff - 1) // num_staff + 1  # ceil + 1 slack
             
             for s in self.night_staff:
-                count = sum(x[s.id, d] for d in holidays)
-                # Minimize deviation from avg
-                # We can just minimize sum of squares or absolute diff?
-                # Spec: "Minimize max-min" or "Equalize"? Spec says "Minimize deviation".
-                # Simple implementation: penalty = abs(count - avg)
-                # Note: Exact average might be float. 
-                # Let's target range [avg, avg+1]
+                h_count = sum(x[s.id, d] for d in holidays)
                 
-                dev = model.NewIntVar(0, len(holidays), f'h_dev_{s.id}')
-                # dev >= count - avg
-                # dev >= avg - count
-                model.Add(dev >= count - avg)
-                model.Add(dev >= avg - count)
-                penalties.append(dev * WEIGHT_HOLIDAY)
+                # Hard: 上限制約（絶対に超えない）
+                model.Add(h_count <= max_per_person)
+                
+                # Incremental penalty: 回数が増えるほどペナルティが急増
+                # 1回目: 100,000  2回目: 300,000  3回目: 600,000 ...
+                # これにより分散が強力に促進される
+                for k in range(1, max_per_person + 1):
+                    over_k = model.NewBoolVar(f'h_over_{s.id}_{k}')
+                    model.Add(h_count >= k + 1).OnlyEnforceIf(over_k)
+                    model.Add(h_count <= k).OnlyEnforceIf(over_k.Not())
+                    penalties.append(over_k * (k * 200000))
+
+        # NS-07: 明けが日祝日に当たる回数の均等化 — Hard + Incremental Penalty
+        # 夜勤の翌日が日祝日 → その夜勤日をカウントして均等化
+        ake_holidays = []
+        for d in self.dates:
+            next_day = d + timedelta(days=1)
+            if next_day.weekday() == 6 or jpholiday.is_holiday(next_day):
+                ake_holidays.append(d)
+
+        if ake_holidays:
+            total_ake = len(ake_holidays) * 3
+            num_staff = len(self.night_staff)
+            max_ake_per_person = (total_ake + num_staff - 1) // num_staff + 1
+
+            for s in self.night_staff:
+                a_count = sum(x[s.id, d] for d in ake_holidays)
+                
+                # Hard: 上限制約
+                model.Add(a_count <= max_ake_per_person)
+                
+                # Incremental penalty
+                for k in range(1, max_ake_per_person + 1):
+                    over_k = model.NewBoolVar(f'ah_over_{s.id}_{k}')
+                    model.Add(a_count >= k + 1).OnlyEnforceIf(over_k)
+                    model.Add(a_count <= k).OnlyEnforceIf(over_k.Not())
+                    penalties.append(over_k * (k * 200000))
 
         # NS-03: Saturday Distribution (Weight 50)
         WEIGHT_SAT = 50
@@ -433,6 +457,20 @@ class NightScheduler:
                 model.Add(dev >= count - avg_sat)
                 model.Add(dev >= avg_sat - count)
                 penalties.append(dev * WEIGHT_SAT)
+
+        # NS-06: 若手（技師歴3年以内）だけの夜勤組合せを避ける
+        # 3人全員が若手の場合にペナルティ（ソフト制約・低優先度）
+        WEIGHT_JUNIOR_ONLY = 5000
+        junior_staff = [s for s in self.night_staff if s.experience_years <= 3]
+        
+        if len(junior_staff) >= 3:
+            for d in self.dates:
+                junior_sum = sum(x[s.id, d] for s in junior_staff)
+                # junior_sum == 3 なら全員若手 → ペナルティ
+                # 超過分をペナルティとして加算（3人全員若手なら excess=1）
+                excess = model.NewIntVar(0, 3, f'junior_excess_{d}')
+                model.Add(excess >= junior_sum - 2)
+                penalties.append(excess * WEIGHT_JUNIOR_ONLY)
                 
         model.Minimize(sum(penalties))
 

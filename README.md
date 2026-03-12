@@ -30,7 +30,11 @@ cd ~/Desktop/"local-shift ver1"
 
 ```bash
 python main.py --year 2026 --month 1
+
+cd /Users/kohei/Desktop/local-shift\ ver1
+source shift_scheduler/venv/bin/activate && python main.py --year 2026 --month 2
 ```
+
 
 ### 手順5: 結果を確認する
 画面に「✅ 勤務表作成完了」と表示されれば成功です。

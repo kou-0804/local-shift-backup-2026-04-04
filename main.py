@@ -24,13 +24,13 @@ def main():
     month = args.month
     year_month = f"{year}-{month:02d}"
     
-    print("=" * 70)
-    print(f"勤務表作成システム - {year}年{month}月")
-    print("=" * 70)
-    print()
+    print("=" * 70, flush=True)
+    print(f"勤務表作成システム - {year}年{month}月", flush=True)
+    print("=" * 70, flush=True)
+    print(flush=True)
     
     # データ読み込み
-    print("📂 データ読み込み中...")
+    print("📂 データ読み込み中...", flush=True)
     # NOTE: user originally asked for `DataLoader(data_dir=args.data_dir)`
     # My DataLoader logic might just take base path.
     # checking imports: src/loaders/data_loader.py
@@ -61,10 +61,10 @@ def main():
         # 6. Load Night Shift Counts (Limits)
         name_to_id = {s.name: s.id for s in staff_list}
         night_counts = loader.load_night_counts(year_month, name_to_id=name_to_id)
-        print(f"  夜勤回数データ: {len(night_counts)}名分")
+        print(f"  夜勤回数データ: {len(night_counts)}名分", flush=True)
 
     except Exception as e:
-        print(f"Error loading data: {e}")
+        print(f"Error loading data: {e}", flush=True)
         # Fallback or exit
         # Try granular if load_all failed or signature mismatch
         # But let's assume we can fix it.
@@ -73,24 +73,24 @@ def main():
     technicians = staff_list # Alias
     special_rules = rules
     
-    print(f"  技師: {len(technicians)}名")
-    print(f"  勤務場所: {len(locations)}箇所")
-    print(f"  予定申請: {len(requests)}件")
-    print()
+    print(f"  技師: {len(technicians)}名", flush=True)
+    print(f"  勤務場所: {len(locations)}箇所", flush=True)
+    print(f"  予定申請: {len(requests)}件", flush=True)
+    print(flush=True)
     
     # 夜勤スキル導出
-    print("🌙 夜勤スキル導出中...")
+    print("🌙 夜勤スキル導出中...", flush=True)
     night_skills = NightSkillDeriver.derive(skills)
     mr_count = sum(1 for ns in night_skills if ns.mr_skill)
     angio_count = sum(1 for ns in night_skills if ns.angio_skill)
     cath_count = sum(1 for ns in night_skills if ns.cath_skill)
-    print(f"  MRスキル: {mr_count}名")
-    print(f"  アンギオスキル: {angio_count}名")
-    print(f"  心カテスキル: {cath_count}名")
-    print()
+    print(f"  MRスキル: {mr_count}名", flush=True)
+    print(f"  アンギオスキル: {angio_count}名", flush=True)
+    print(f"  心カテスキル: {cath_count}名", flush=True)
+    print(flush=True)
     
     # --- Load Previous Month History from Requests ---
-    print("🔙 前月の夜勤実績を申請データから確認中...")
+    print("🔙 前月の夜勤実績を申請データから確認中...", flush=True)
     start_date = date(year, month, 1)
     prev_month_limit = start_date - timedelta(days=7)
     prev_night_history = []
@@ -99,10 +99,10 @@ def main():
             if '夜' in r.symbol:
                 na = NightAssignment(date=r.date, staff_id=r.staff_id, role='History')
                 prev_night_history.append(na)
-    print(f"  前月の夜勤実績(申請より): {len(prev_night_history)}件")
+    print(f"  前月の夜勤実績(申請より): {len(prev_night_history)}件", flush=True)
 
     # 夜勤スケジューリング
-    print("🌙 夜勤スケジューリング実行中...")
+    print("🌙 夜勤スケジューリング実行中...", flush=True)
     
     night_scheduler = NightScheduler(
         staff_list=technicians,
@@ -110,8 +110,8 @@ def main():
         month=month
     )
     night_result = night_scheduler.schedule(requests, night_counts, prev_night_history) # Returns List[NightAssignment]
-    print(f"  夜勤配置数: {len(night_result)}件")
-    print()
+    print(f"  夜勤配置数: {len(night_result)}件", flush=True)
+    print(flush=True)
     
     # Data Conversion: List[NightAssignment] -> Dict[int, List[str]] (day -> [ids])
     night_assignments_dict = {}
@@ -121,7 +121,7 @@ def main():
         night_assignments_dict[na.date.day].append(na.staff_id)
         
     # --- Load Previous Month History from Requests (Req 4 Fix via User Feedback) ---
-    print("🔙 前月の夜勤実績を申請データから確認中...")
+    print("🔙 前月の夜勤実績を申請データから確認中...", flush=True)
     
     # We need to find 'Night' requests in the previous month (last few days)
     # and treat them as confirmed Night Assignments for the scheduler's context.
@@ -149,7 +149,7 @@ def main():
                 prev_night_history.append(na)
                 # print(f"  Found history: {r.date} {r.staff_id} {r.symbol}")
 
-    print(f"  前月の夜勤実績(申請より): {len(prev_night_history)}件 -> 統合")
+    print(f"  前月の夜勤実績(申請より): {len(prev_night_history)}件 -> 統合", flush=True)
     
     # Merge for Scheduler
     # We keep `night_result` clean for Excel output (current month only).
@@ -157,7 +157,7 @@ def main():
     full_night_assignments = night_result + prev_night_history
     
     # 日勤スケジューリング
-    print("☀️ 日勤スケジューリング実行中...")
+    print("☀️ 日勤スケジューリング実行中...", flush=True)
     day_scheduler = DayScheduler(
         staff_list=technicians, 
         skills=skills,
@@ -169,8 +169,8 @@ def main():
     )
     
     day_result_list = day_scheduler.schedule(requests, full_night_assignments) # Pass Full List
-    print(f"  日勤配置数: {len(day_result_list)}件")
-    print()
+    print(f"  日勤配置数: {len(day_result_list)}件", flush=True)
+    print(flush=True)
     
     # Data Conversion: List[DayAssignment] -> Dict[int, Dict[str, List[str]]]
     # {day: {loc_code: [tech_id]}}
@@ -212,7 +212,7 @@ def main():
             requests_dict[d_day][r.staff_id] = r.symbol
 
     # Excel出力
-    print("📊 Excel生成中...")
+    print("📊 Excel生成中...", flush=True)
     os.makedirs(args.output_dir, exist_ok=True)
     
     output_path = f"{args.output_dir}/勤務表_{year}年{month}月.xlsx"
@@ -226,11 +226,11 @@ def main():
         name_mapper=None # Optional if not used
     )
     generator.generate(output_path)
-    print()
+    print(flush=True)
     
-    print("=" * 70)
-    print("✅ 勤務表作成完了")
-    print("=" * 70)
+    print("=" * 70, flush=True)
+    print("✅ 勤務表作成完了", flush=True)
+    print("=" * 70, flush=True)
 
 if __name__ == '__main__':
     main()

@@ -1,0 +1,22 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+shift_scheduler/venv/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Outputs
+output/
+*.xlsx
+*.csv
+
+# OS Files
+.DS_Store
+.AppleDouble
+.LSOverride

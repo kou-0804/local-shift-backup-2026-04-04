@@ -75,7 +75,7 @@ class ExcelGenerator:
 
         # Stats Header
         stats_start_col = self.days_in_month + 3
-        self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+        self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
         
         for i, label in enumerate(self.stats_columns):
             col_idx = stats_start_col + i
@@ -119,7 +119,7 @@ class ExcelGenerator:
             
             # カウンター初期化
             if not hasattr(self, 'stats_columns'):
-                self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+                self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
             counts = {label: 0 for label in self.stats_columns}
             
             # 各日の配置
@@ -200,6 +200,10 @@ class ExcelGenerator:
             if req_symbol:
                 return req_symbol
         
+        # 「休」が割り当てられていても、予定申請があればそちらを優先表示
+        if parts == ['休'] and req_symbol and req_symbol not in ['', '夜希']:
+            return req_symbol
+        
         return '/'.join(parts) if parts else ''
     
     def _get_cell_fill(self, tech_id: str, day: int, cell_value: str) -> PatternFill:
@@ -226,7 +230,7 @@ class ExcelGenerator:
         )
         
         if not hasattr(self, 'stats_columns'):
-             self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+             self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
              
         max_col = self.days_in_month + 2 + len(self.stats_columns) # +2 for ID, Name
         

@@ -38,9 +38,12 @@ class DayScheduler:
         all_assignments = []
         assignment_history = [] # List of {staff_id: location_code} per day
         
-        # Track cumulative counts for Fairness (Ultra-Late, Portable, MG)
-        # {staff_id: {'超遅': 0, 'ポ': 0, 'MG': 0}}
-        assignment_counts = {s.id: {'超遅': 0, 'ポ': 0, 'MG': 0, '出': 0} for s in self.staff_list}
+        # Track cumulative counts for Fairness (Ultra-Late, Portable, MG, ク遅, M遅)
+        # {staff_id: {'超遅': 0, 'ポ': 0, 'MG': 0, 'ク遅': 0, 'M遅': 0}}
+        assignment_counts = {s.id: {'超遅': 0, 'ポ': 0, 'MG': 0, '出': 0, 'ク遅': 0, 'M遅': 0} for s in self.staff_list}
+        
+        # Track consecutive working days for 6-day limit
+        consecutive_work_days = {s.id: 0 for s in self.staff_list}
         
         # Pre-process requests and night shifts for fast lookup
         req_map = {(r.staff_id, r.date): r.symbol for r in requests}
@@ -54,7 +57,7 @@ class DayScheduler:
             print(f"Scheduling Day: {d}")
             prev_assignments = assignment_history[-1] if assignment_history else {}
             
-            day_assignments = self._schedule_one_day(d, req_map, night_map, prev_assignments, assignment_counts)
+            day_assignments = self._schedule_one_day(d, req_map, night_map, prev_assignments, assignment_counts, consecutive_work_days)
             all_assignments.extend(day_assignments)
             
             # Record history
@@ -63,8 +66,17 @@ class DayScheduler:
             
             # Update cumulative counts
             for a in day_assignments:
-                if a.location_code in ['超遅', 'ポ', 'MG', '出']:
+                if a.location_code in ['超遅', 'ポ', 'MG', '出', 'ク遅', 'M遅']:
                     assignment_counts[a.staff_id][a.location_code] += 1
+            
+            # Update consecutive work days
+            for s in self.staff_list:
+                loc = current_day_map.get(s.id)
+                # 休暇や明け以外なら連勤カウント増加
+                if loc and loc not in ['休', '○']:
+                    consecutive_work_days[s.id] += 1
+                else:
+                    consecutive_work_days[s.id] = 0
             
         return all_assignments
 
@@ -73,7 +85,8 @@ class DayScheduler:
                           req_map: Dict[Tuple[str, date], str], 
                           night_map: Dict[Tuple[str, date], bool],
                           prev_assignments: Dict[str, str],
-                          assignment_counts: Dict[str, Dict[str, int]]) -> List[DayAssignment]:
+                          assignment_counts: Dict[str, Dict[str, int]],
+                          consecutive_work_days: Dict[str, int]) -> List[DayAssignment]:
         
         model = cp_model.CpModel()
         weekday = current_date.weekday() # 0=Mon, 6=Sun
@@ -140,7 +153,7 @@ class DayScheduler:
             # Clinic Codes: 'クMR', 'ク', 'DR' (Confirmed via Master)
             # Weekday 5 = Sat. Week 3 = 3rd occurrence.
             if weekday == 5 and current_week_num == 3:
-                 clinic_codes = ['クMR', 'ク', 'DR', 'CT', 'MG']
+                 clinic_codes = ['クMR', 'ク', 'DR', 'CT', 'MG', 'ク遅', 'M遅']
                  # Remove from needs
                  for c in clinic_codes:
                      if c in location_needs:
@@ -155,7 +168,8 @@ class DayScheduler:
         # - Not Previous Day Night Shift (DH-05)
         
         HOLIDAY_SYMBOLS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '研(聴)', '退職',
-                           '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)'}
+                           '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)',
+                           '研(座)', '研(役)', '出/(役)'}
         # '○' is Night Shift End (明け) -> Treated as Holiday usually? 
         # Spec says "○ | 夜勤明け | × | × | ×" (Day: ×) -> So Yes, treated as Holiday/Off.
         
@@ -209,6 +223,15 @@ class DayScheduler:
         for s in self.staff_list:
             if s.status != '在籍':
                 continue
+            
+            # 6日連続勤務後は強制休暇（連勤最大6日）
+            if consecutive_work_days.get(s.id, 0) >= 6:
+                p_req_check = req_map.get((s.id, current_date))
+                if p_req_check is None:
+                    # 予定申請がない場合のみ強制休暇
+                    forced_holidays.append(DayAssignment(date=current_date, staff_id=s.id, location_code='休', rank=SkillRank.NONE))
+                    continue
+                # 予定申請がある場合は連勤制限を適用せず、予定申請を優先する
                 
             # Check Previous Night (DH-05)
             if night_map.get((s.id, prev_date)):
@@ -283,8 +306,12 @@ class DayScheduler:
                 if rank == SkillRank.NONE:
                     continue
                 
-                # Specialized Rank Rules (User Request: "HB, AG must be A")
-                if l_code in ['HB', 'ア'] and rank < SkillRank.A:
+                # Specialized Rank Rules
+                # HB: Aランク必須
+                if l_code == 'HB' and rank < SkillRank.A:
+                    continue
+                # アンギオ: Bランク以上
+                if l_code == 'ア' and rank < SkillRank.B:
                     continue
                 
                 # Seisa (精): Wed/Fri -> Rank A. Others -> Rank B (Exclude Rank A).
@@ -303,12 +330,8 @@ class DayScheduler:
                 if l_code == '心' and rank < SkillRank.B:
                     continue
 
-                # Ultra Late ('超遅') Logic: Male OR (Female + MG Skill B+)
-                if l_code == '超遅':
-                     if s.gender.value == '女':
-                         mg_rank = s_skills.get('MG', SkillRank.NONE)
-                         if mg_rank < SkillRank.B:
-                             continue
+                # Ultra Late ('超遅') / Clinic Late ('ク遅') / MRI Late ('M遅'): 翌日夜勤なら配置不可
+                if l_code in ['超遅', 'ク遅', 'M遅']:
                      # Req 3: Ban if next day is Night
                      if is_night_tomorrow:
                          continue
@@ -318,7 +341,7 @@ class DayScheduler:
                     continue
                     
                 # DH-08,09,10: Late/MG Ban
-                if ban_late and l_code in ['遅番', '超遅']:
+                if ban_late and l_code in ['遅番', '超遅', 'ク遅', 'M遅']:
                     continue
                 if ban_mg_po and l_code in ['MG', 'ポ']:
                     continue
@@ -330,7 +353,7 @@ class DayScheduler:
 
                 # Soft Constraint for Fairness (Equalize Counts)
                 # Req 1: Add '出' to fairness check
-                if l_code in ['超遅', 'ポ', 'MG', '出']:
+                if l_code in ['超遅', 'ポ', 'MG', '出', 'ク遅', 'M遅']:
                     count = assignment_counts[s.id].get(l_code, 0)
                     if count > 0:
                         fairness_penalties.append(x[s.id, l_code] * (count * 20))
@@ -359,13 +382,8 @@ class DayScheduler:
                         ultra_late_next_day_penalties.append(sum(vars_s) * 500) # High penalty to prefer Off
                         
                         # Implementation of Restriction if working
-                        # "Next is '入' or 'MG'"
-                        allowed_next = ['入'] 
-                        # If Female and MG capable? User said "Next '入' Female case 'MG'".
-                        # Assuming MG is allowed if they have skill.
-                        # User: "next '入', if female 'MG' either is allowed" -> "Allowed: '入', 'MG' (if female)"
-                        if s.gender.value == '女':
-                            allowed_next.append('MG')
+                        # 超遅の翌日は「ク遅」「入」「休」のいずれか
+                        allowed_next = ['ク遅', '入', '休']
                         
                         # Constraint: If sum(vars_s) == 1, then one of allowed must be 1.
                         # Meaning others must be 0.
@@ -515,6 +533,23 @@ class DayScheduler:
                                if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) in [SkillRank.C, SkillRank.D]]
                     if cd_vars:
                          model.Add(sum(cd_vars) < req_num)
+
+            # PB-05 end
+
+        # PB-06: クリニック系（ク + ク遅 + MG）の女性配置
+        # 常時: 女性3人以上、金曜日: 女性4人以上
+        clinic_female_codes = ['ク', 'ク遅', 'MG']
+        female_clinic_vars = []
+        for s in available_staff:
+            if s.gender.value == '女':
+                for lc in clinic_female_codes:
+                    if (s.id, lc) in x:
+                        female_clinic_vars.append(x[s.id, lc])
+        
+        if female_clinic_vars:
+            weekday = current_date.weekday()
+            min_female = 4 if weekday == 4 else 3  # 金曜4人、その他3人
+            model.Add(sum(female_clinic_vars) >= min_female)
 
     def _extract_day_solution(self, solver, x, date, skills) -> List[DayAssignment]:
         res = []
