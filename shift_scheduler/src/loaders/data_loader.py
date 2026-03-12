@@ -131,8 +131,15 @@ class DataLoader:
                     break
             
             if not target_col:
-                 print(f"Warning: Month column '{month}' (or {m_int}月) not found in {path}. Available: {list(norm_cols.values())}")
-                 return {}
+                 print(f"Warning: Month column '{month}' (or {m_int}月) not found in {path}.")
+                 # Fallback to the first column that looks like a month or just the second column
+                 # The first column is usually '名前', the second is the month data e.g. '3月'
+                 available_cols = list(df.columns)
+                 if len(available_cols) > 1:
+                     target_col = available_cols[1]
+                     print(f"Fallback: Using column '{target_col}' for quotas instead.")
+                 else:
+                     return {}
             
             # Map Name -> ID -> Count
             result = {}
