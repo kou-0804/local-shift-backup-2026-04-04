@@ -72,8 +72,24 @@ class DayScheduler:
             # Update consecutive work days
             for s in self.staff_list:
                 loc = current_day_map.get(s.id)
-                # 休暇や明け以外なら連勤カウント増加
-                if loc and loc not in ['休', '○']:
+                # Check target day for night shift
+                is_night_today = night_map.get((s.id, d))
+                # Check previous day for ake (post-night)
+                is_ake_today = night_map.get((s.id, d - timedelta(days=1)))
+                
+                is_working_day = False
+                
+                req_symbol = req_map.get((s.id, d))
+                is_working_req = False
+                if req_symbol and req_symbol not in ['休', '○', '★', '★連', '☆', '☆小', '☆デ', '◆', '退職']:
+                    is_working_req = True
+                
+                if is_night_today or is_ake_today or is_working_req:
+                    is_working_day = True # Night, Ake, and Working Requests definitely count as working instances
+                elif loc and loc not in ['休', '○']:
+                    is_working_day = True # Normal day assignment
+                    
+                if is_working_day:
                     consecutive_work_days[s.id] += 1
                 else:
                     consecutive_work_days[s.id] = 0
@@ -147,7 +163,11 @@ class DayScheduler:
                             target_locations.append(loc_obj)
                             location_needs[rule.location_code] = rule.required_count
                     else:
-                        location_needs[rule.location_code] = rule.required_count
+                        # Prevent SR-08 and SR-09 from overwriting the Saturday master requirement (3) with (6/4)
+                        if weekday == 5 and rule.location_code in ['病CT', 'CT']:
+                            pass # Keep the location master data (3)
+                        else:
+                            location_needs[rule.location_code] = rule.required_count
 
             # Clinic Holiday: 3rd Saturday -> All Clinic locations closed
             # Clinic Codes: 'クMR', 'ク', 'DR' (Confirmed via Master)
@@ -186,10 +206,18 @@ class DayScheduler:
             '出/講': '出/講'
         }
         
+        female_gyohai_wed = 0
+        gyohai_has_veteran = False
+        
         # Pre-process Forced Requests to adjust Location Needs
         for s in self.staff_list:
             if s.status != '在籍': continue
             p_req = req_map.get((s.id, current_date))
+            
+            if weekday == 2 and p_req == '業配' and s.gender.value == '女':
+                female_gyohai_wed += 1
+                if int(s.experience_years) >= 6:
+                    gyohai_has_veteran = True
             
             if p_req in FORCED_LOC_MAP:
                 target_loc_code = FORCED_LOC_MAP[p_req]
@@ -207,6 +235,10 @@ class DayScheduler:
                              target_locations.append(loc_obj)
                              
                     location_needs[target_loc_code] += 1
+                    
+        # Deduct Wednesday female Gyohai from 'ク' needs
+        if female_gyohai_wed > 0 and 'ク' in location_needs:
+            location_needs['ク'] = max(0, location_needs['ク'] - female_gyohai_wed)
 
         # 17 constraints (DH-08, 09, 10)
         # '17業', '17休', 'SameDayNight' -> No Late Shifts
@@ -224,8 +256,30 @@ class DayScheduler:
             if s.status != '在籍':
                 continue
             
+            # Calculate unavoidable future consecutive work days due to Night/Ake/Requests
+            forced_future = 0
+            for offset in range(1, 10):
+                check_d = current_date + timedelta(days=offset)
+                is_n = night_map.get((s.id, check_d))
+                is_a = night_map.get((s.id, check_d - timedelta(days=1)))
+                
+                is_working_req = False
+                req_symbol = req_map.get((s.id, check_d))
+                if req_symbol and req_symbol not in ['休', '○', '★', '★連', '☆', '☆小', '☆デ', '◆', '退職']:
+                    # If there's a request and it's not a holiday, it's a forced working day
+                    is_working_req = True
+                
+                if is_n or is_a or is_working_req:
+                    forced_future += 1
+                else:
+                    break # Reached a day where they *could* theoretically rest
+            
             # 6日連続勤務後は強制休暇（連勤最大6日）
-            if consecutive_work_days.get(s.id, 0) >= 6:
+            # もし「今の連勤数」＋「今日働くとしたら(1)」＋「避けられない未来の連勤数(forced_future)」が6を超えるなら、
+            # 今日を「休」にして連勤をリセットしなければならない。
+            c_days = consecutive_work_days.get(s.id, 0)
+            
+            if c_days >= 6 or (c_days + 1 + forced_future > 6):
                 p_req_check = req_map.get((s.id, current_date))
                 if p_req_check is None:
                     # 予定申請がない場合のみ強制休暇
@@ -398,7 +452,7 @@ class DayScheduler:
             model.Add(sum(vars_l) <= req) # Req 2: Allow understaffing if impossible
             
         # 5. Power Balance (PB-xx)
-        self._add_power_balance_constraints(model, x, target_locations, location_needs, available_staff, current_date)
+        self._add_power_balance_constraints(model, x, target_locations, location_needs, available_staff, current_date, weekday, female_gyohai_wed, gyohai_has_veteran)
 
 
         # 6. Special Rules (SR-xx)
@@ -407,7 +461,7 @@ class DayScheduler:
         # week_num = (day - 1) // 7 + 1
         current_week_num = (current_date.day - 1) // 7 + 1
         
-        self._add_special_rules(model, x, current_date, self.rules)
+        self._add_special_rules(model, x, current_date, self.rules, location_needs)
 
         # 7. Soft Constraints: Minimize Consecutive Same Assignments
         consecutive_penalties = []
@@ -456,7 +510,7 @@ class DayScheduler:
                 res.append(DayAssignment(date=date, staff_id=sid, location_code=lcode, rank=rank))
         return res
 
-    def _add_power_balance_constraints(self, model, x, target_locations, location_needs, available_staff, current_date):
+    def _add_power_balance_constraints(self, model, x, target_locations, location_needs, available_staff, current_date, day_of_week, female_gyohai_wed, gyohai_has_veteran):
         """Phase 4: Power Balance Constraints"""
         
         # Helper map
@@ -493,7 +547,9 @@ class DayScheduler:
                         qualified = [v for s, v in vars_s_loc 
                                      if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= pb.min_rank]
                         if qualified:
-                            model.Add(sum(qualified) >= pb.min_count)
+                            actual_req = location_needs.get(l_code, 0)
+                            adjusted_min_count = min(pb.min_count, actual_req)
+                            model.Add(sum(qualified) >= adjusted_min_count)
                         
                 # PB-02: CD Cap
                 if pb.cd_cap is not None:
@@ -536,9 +592,28 @@ class DayScheduler:
 
             # PB-05 end
 
+            # PB-07: クリニック（ク）の経験年数制約（若い人ばかりにならない）
+            if l_code == 'ク':
+                # The ORIGINAL req_num before deducting gyohai was location_needs['ク'] + female_gyohai_wed
+                original_req_num = location_needs.get(l_code, 0) + (female_gyohai_wed if day_of_week == 2 else 0)
+                
+                if original_req_num >= 2:
+                    # If Gyohai already supplied a veteran, we are good.
+                    if day_of_week == 2 and gyohai_has_veteran:
+                        pass # Requirement already met by fixed assignment
+                    else:
+                        # 経験年数6年以上のベテランが最低1人は入るようにする
+                        experienced_vars = [v for s, v in vars_s_loc 
+                                            if int(s.experience_years) >= 6]
+                        if experienced_vars:
+                            model.Add(sum(experienced_vars) >= 1)
+                        else:
+                            print(f"DEBUG: No veterans available for 'ク' on {current_date}")
+
         # PB-06: クリニック系（ク + ク遅 + MG）の女性配置
         # 常時: 女性3人以上、金曜日: 女性4人以上
         clinic_female_codes = ['ク', 'ク遅', 'MG']
+            
         female_clinic_vars = []
         for s in available_staff:
             if s.gender.value == '女':
@@ -549,6 +624,9 @@ class DayScheduler:
         if female_clinic_vars:
             weekday = current_date.weekday()
             min_female = 4 if weekday == 4 else 3  # 金曜4人、その他3人
+            if day_of_week == 2:
+                # Deduct women already stationed via Gyohai
+                min_female = max(0, min_female - female_gyohai_wed)
             model.Add(sum(female_clinic_vars) >= min_female)
 
     def _extract_day_solution(self, solver, x, date, skills) -> List[DayAssignment]:
@@ -559,7 +637,7 @@ class DayScheduler:
                 res.append(DayAssignment(date=date, staff_id=sid, location_code=lcode, rank=rank))
         return res
 
-    def _add_special_rules(self, model, x, current_date, special_rules):
+    def _add_special_rules(self, model, x, current_date, special_rules, location_needs):
         """Phase 5: Special Placement Rules"""
         weekday = current_date.weekday()
         week_num = self._get_week_number(current_date.day)
@@ -586,8 +664,11 @@ class DayScheduler:
             
             if not vars_loc_only: continue
 
-            # Apply Logic based on rule attributes
-            
+            # Get the actual required count for today from our pre-processed location_needs
+            actual_req = location_needs.get(loc_code, 0)
+            if actual_req == 0:
+                continue # Skip applying rule if location is closed today
+
             # Rank Condition (e.g. "A Rank >= 2" or "D Ban")
             if rule.rank_condition:
                 if isinstance(rule.rank_condition, SkillRank): # Standard Rank (A/B/C)
@@ -599,15 +680,23 @@ class DayScheduler:
                             qualified.append(var)
                     
                     if rule.rank_count > 0:
-                        model.Add(sum(qualified) >= rule.rank_count)
+                        # Scale down the constraint if the actual daily requirement is lower than the rule's assumption.
+                        # For example, if rule says 6 total and 2 A-ranks, but today is Saturday with only 3 total.
+                        # Target rank count should be min(rule.rank_count, actual_req)
+                        # More specifically for SR-08/08b (2xA, 1xB total 6), 
+                        # We just apply min(rule.rank_count, max(1, actual_req // 2)) depending on ratio, but for safety:
+                        target_rank_count = min(rule.rank_count, actual_req)
+                        # We also shouldn't enforce the full rank distribution strictly if it exceeds actual_req.
+                        # But for CT/病CT (Saturday = 3), A:2 and B:1 is exactly 3 which is tight but possible.
+                        model.Add(sum(qualified) >= target_rank_count)
                         
                 elif rule.rank_condition == 'D同士禁止': # String condition?
                     pass
 
-            # If rule has required_count, handled in override section, BUT
-            # if we wanted to enforce strict sum here:
+            # If rule has required_count, ensure we sum to the actual needed count for today,
+            # NOT necessarily the one in the rule if it was overridden (e.g., Saturday CT).
             if rule.required_count > 0:
-                model.Add(sum(vars_loc_only) == rule.required_count)
+                model.Add(sum(vars_loc_only) == actual_req)
 
             # Source Logic (OP from HB A)
             if rule.source_location and rule.source_rank:
