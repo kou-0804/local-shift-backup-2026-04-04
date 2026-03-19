@@ -19,7 +19,8 @@ class ExcelGenerator:
         night_assignments: Dict[int, List[str]],
         day_assignments: Dict[int, Dict[str, List[str]]],
         requests: Dict[int, Dict[str, str]], # {day: {staff_id: symbol}}
-        name_mapper
+        name_mapper=None,
+        daikyu_counts: Dict[str, int] = None
     ):
         self.year = year
         self.month = month
@@ -28,6 +29,7 @@ class ExcelGenerator:
         self.day_assignments = day_assignments
         self.requests = requests
         self.name_mapper = name_mapper
+        self.daikyu_counts = daikyu_counts or {}
         
         self.days_in_month = calendar.monthrange(year, month)[1]
         
@@ -75,7 +77,7 @@ class ExcelGenerator:
 
         # Stats Header
         stats_start_col = self.days_in_month + 3
-        self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+        self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR', '代休']
         
         for i, label in enumerate(self.stats_columns):
             col_idx = stats_start_col + i
@@ -119,7 +121,7 @@ class ExcelGenerator:
             
             # カウンター初期化
             if not hasattr(self, 'stats_columns'):
-                self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+                self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR', '代休']
             counts = {label: 0 for label in self.stats_columns}
             
             # 各日の配置
@@ -144,6 +146,9 @@ class ExcelGenerator:
                 for p in parts:
                     if p in counts:
                         counts[p] += 1
+            
+            # 代休カウント
+            counts['代休'] = self.daikyu_counts.get(tech.id, 0)
             
             # 統計出力
             stats_start_col = self.days_in_month + 3
@@ -230,7 +235,7 @@ class ExcelGenerator:
         )
         
         if not hasattr(self, 'stats_columns'):
-             self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR']
+             self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR', '代休']
              
         max_col = self.days_in_month + 2 + len(self.stats_columns) # +2 for ID, Name
         

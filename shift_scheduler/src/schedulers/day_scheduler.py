@@ -42,7 +42,7 @@ class DayScheduler:
         # {staff_id: {'超遅': 0, 'ポ': 0, 'MG': 0, 'ク遅': 0, 'M遅': 0}}
         assignment_counts = {s.id: {'超遅': 0, 'ポ': 0, 'MG': 0, '出': 0, 'ク遅': 0, 'M遅': 0} for s in self.staff_list}
         
-        # Track consecutive working days for 6-day limit
+        # Track consecutive working days for 6-day limit (legacy fallback)
         consecutive_work_days = {s.id: 0 for s in self.staff_list}
         
         # Pre-process requests and night shifts for fast lookup
