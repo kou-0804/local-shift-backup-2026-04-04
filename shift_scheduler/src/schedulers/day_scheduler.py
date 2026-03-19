@@ -304,6 +304,12 @@ class DayScheduler:
             if p_req in HOLIDAY_SYMBOLS:
                 continue
                 
+            # NEW LOGIC: Ishikawa 4th Tuesday PET Assignment
+            if s.id == 'T002' and current_date.weekday() == 1 and 22 <= current_date.day <= 28:
+                if not night_map.get((s.id, current_date)):
+                    forced_holidays.append(DayAssignment(date=current_date, staff_id=s.id, location_code='PET', rank=SkillRank.NONE))
+                    continue
+                
             staff_req_symbol[s.id] = p_req
             available_staff.append(s)
 
