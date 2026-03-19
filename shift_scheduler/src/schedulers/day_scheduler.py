@@ -40,7 +40,7 @@ class DayScheduler:
         
         # Track cumulative counts for Fairness (Ultra-Late, Portable, MG, ク遅, M遅)
         # {staff_id: {'超遅': 0, 'ポ': 0, 'MG': 0, 'ク遅': 0, 'M遅': 0}}
-        assignment_counts = {s.id: {'超遅': 0, 'ポ': 0, 'MG': 0, '出': 0, 'ク遅': 0, 'M遅': 0} for s in self.staff_list}
+        assignment_counts = {s.id: {} for s in self.staff_list}
         
         # Track consecutive working days for 6-day limit (legacy fallback)
         consecutive_work_days = {s.id: 0 for s in self.staff_list}
@@ -66,8 +66,8 @@ class DayScheduler:
             
             # Update cumulative counts
             for a in day_assignments:
-                if a.location_code in ['超遅', 'ポ', 'MG', '出', 'ク遅', 'M遅']:
-                    assignment_counts[a.staff_id][a.location_code] += 1
+                c = assignment_counts[a.staff_id]
+                c[a.location_code] = c.get(a.location_code, 0) + 1
             
             # Update consecutive work days
             for s in self.staff_list:
@@ -361,6 +361,11 @@ class DayScheduler:
                     continue
                 
                 # Specialized Rank Rules
+                # DH-02: Skill
+                if l_code not in s_skills:
+                    continue
+                if s_skills[l_code] in [SkillRank.NONE, '-', '']:
+                    continue
                 # HB: Aランク必須
                 if l_code == 'HB' and rank < SkillRank.A:
                     continue
@@ -392,30 +397,50 @@ class DayScheduler:
 
                 # DH-06: Gender
                 if loc.gender_constraint == '女性のみ' and s.gender.value == '男':
+                    if s.id == 'T014' and l_code == 'ク' and current_date.day == 21: print("Skipped T014 due to gender")
                     continue
                     
                 # DH-08,09,10: Late/MG Ban
                 if ban_late and l_code in ['遅番', '超遅', 'ク遅', 'M遅']:
+                    if s.id == 'T014' and l_code == 'ク' and current_date.day == 21: print("Skipped T014 due to late ban")
                     continue
                 if ban_mg_po and l_code in ['MG', 'ポ']:
+                    if s.id == 'T014' and l_code == 'ク' and current_date.day == 21: print("Skipped T014 due to MG ban")
                     continue
                 
+                if s.id == 'T014' and l_code == 'ク' and current_date.day == 21: print("T014 'ク' is ADDED TO x!")
                 x[s.id, l_code] = model.NewBoolVar(f'x_{s.id}_{l_code}')
                 
                 # Maximization term (Req 2)
                 maximization_objective.append(x[s.id, l_code] * 10000)
 
                 # Soft Constraint for Fairness (Equalize Counts)
-                # Req 1: Add '出' to fairness check
-                if l_code in ['超遅', 'ポ', 'MG', '出', 'ク遅', 'M遅']:
-                    count = assignment_counts[s.id].get(l_code, 0)
-                    if count > 0:
-                        fairness_penalties.append(x[s.id, l_code] * (count * 20))
+                # Equalize ALL locations across staff to prevent bias
+                count = assignment_counts[s.id].get(l_code, 0)
+                if count > 0:
+                    fairness_penalties.append(x[s.id, l_code] * (count * 20))
+
+                # Special Monthly Bonus Rule for Ono (T014) and Kawana (T026) -> strictly 6 'ク' assignments
+                if s.id in ['T014', 'T026'] and l_code == 'ク':
+                    if count < 6:
+                        # Massive bonus to forcefully pick them for 'ク' until quota hits 6
+                        if (s.id, l_code) in x:
+                            maximization_objective.append(x[s.id, l_code] * 500000)
+                            if s.id == 'T014': print(f"DEBUG: Adding 500k to T014 on Day {current_date.day}. Current count={count}")
+                    else:
+                        # Hard ban once they hit 6
+                        if (s.id, l_code) in x:
+                            model.Add(x[s.id, l_code] == 0)
 
 
         # 4. Hard Constraints
         
         # DH-01: One person <= 1 location (for those not already forced)
+        
+        # Ono / Kawana Special Ban: Cannot both work 'ク' on the same day
+        if ('T014', 'ク') in x and ('T026', 'ク') in x:
+            model.Add(x['T014', 'ク'] + x['T026', 'ク'] <= 1)
+            
         ultra_late_next_day_penalties = []
         for s in available_staff:
             vars_s = [x[s.id, l.code] for l in target_locations if (s.id, l.code) in x]
