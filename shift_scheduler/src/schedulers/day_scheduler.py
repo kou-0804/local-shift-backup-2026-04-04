@@ -26,6 +26,22 @@ class DayScheduler:
         self.month = month
         self.dates = self._generate_dates()
         
+        # Pre-calc MRI-only staff
+        self.mri_only_staff = set()
+        mri_locs = {'病院MR', 'クMR', 'M遅'}
+        ignore_locs = {'出', '超遅', 'ク遅', '遅番', '勤務表作成'}
+        for s in self.staff_list:
+            has_mri = False
+            has_other = False
+            for l, r in self.skills.get(s.id, {}).items():
+                if r.value > SkillRank.NONE.value:
+                    if l in mri_locs:
+                        has_mri = True
+                    elif l not in ignore_locs:
+                        has_other = True
+            if has_mri and not has_other:
+                self.mri_only_staff.add(s.id)
+        
     def _generate_dates(self) -> List[date]:
         import calendar
         num_days = calendar.monthrange(self.year, self.month)[1]
@@ -418,13 +434,18 @@ class DayScheduler:
                 x[s.id, l_code] = model.NewBoolVar(f'x_{s.id}_{l_code}')
                 
                 # Maximization term (Req 2)
-                maximization_objective.append(x[s.id, l_code] * 10000)
+                base_score = 10000
+                if s.id in self.mri_only_staff and l_code in ['病院MR', 'クMR', 'M遅']:
+                    base_score = 500000  # Massive bonus to prioritize MRI-only staff
+                maximization_objective.append(x[s.id, l_code] * base_score)
 
                 # Soft Constraint for Fairness (Equalize Counts)
                 # Equalize ALL locations across staff to prevent bias
                 count = assignment_counts[s.id].get(l_code, 0)
                 if count > 0:
-                    fairness_penalties.append(x[s.id, l_code] * (count * 20))
+                    # M遅の均等化を特に強める（ペナルティの重みを大幅に増やす）
+                    weight = 10000 if l_code == 'M遅' else 20
+                    fairness_penalties.append(x[s.id, l_code] * (count * weight))
 
                 # Special Monthly Bonus Rule for Ono (T014) and Kawana (T026) -> strictly 6 'ク' assignments
                 if s.id in ['T014', 'T026'] and l_code == 'ク':
@@ -484,6 +505,36 @@ class DayScheduler:
             
         # 5. Power Balance (PB-xx)
         self._add_power_balance_constraints(model, x, target_locations, location_needs, available_staff, current_date, weekday, female_gyohai_wed, gyohai_has_veteran)
+
+        # 5.5 クMR Special Rule (SR-クMR)
+        l_code = 'クMR'
+        if l_code in [loc.code for loc in target_locations]:
+            v_s = [(s, x[s.id, l_code]) for s in available_staff if (s.id, l_code) in x]
+            if v_s:
+                a_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= SkillRank.A]
+                ab_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= SkillRank.B]
+                d_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) == SkillRank.D]
+                
+                if weekday == 2:  # 水曜
+                    if a_vars: model.Add(sum(a_vars) >= 3)
+                    if ab_vars: model.Add(sum(ab_vars) >= 4) # A3, B1
+                    if d_vars: model.Add(sum(d_vars) == 0) # D禁止
+                elif weekday == 4:  # 金曜
+                    if a_vars: model.Add(sum(a_vars) >= 2)
+                    if ab_vars: model.Add(sum(ab_vars) >= 4) # A2, B2
+                    if d_vars: model.Add(sum(d_vars) <= 1)
+                else:  # 月火木土
+                    if a_vars: model.Add(sum(a_vars) >= 2)
+                    if ab_vars: model.Add(sum(ab_vars) >= 3) # A2, B1
+                    if d_vars: model.Add(sum(d_vars) <= 1)
+                
+                # Soft Constraint for D
+                if weekday != 2 and d_vars:
+                    d_count = sum(d_vars)
+                    d_assigned = model.NewBoolVar(f'd_assigned_in_clinic_mr_{current_date.day}')
+                    model.Add(d_count == 1).OnlyEnforceIf(d_assigned)
+                    model.Add(d_count != 1).OnlyEnforceIf(d_assigned.Not())
+                    maximization_objective.append(d_assigned * 500) # Give bonus to assign exactly 1 D
 
 
         # 6. Special Rules (SR-xx)
@@ -545,7 +596,9 @@ class DayScheduler:
         """Phase 4: Power Balance Constraints"""
         
         # Helper map
-        pb_map = {r.location_code: r for r in self.pb_rules}
+        pb_map = {}
+        for r in self.pb_rules:
+            pb_map.setdefault(r.location_code, []).append(r)
         
         for loc in target_locations:
             l_code = loc.code
@@ -562,41 +615,40 @@ class DayScheduler:
             if not vars_loc_only: continue
 
             # --- Generic Rules (PB-01, PB-02, PB-03) ---
-            if l_code in pb_map:
-                pb = pb_map[l_code]
-                
-                # PB-01: Min Rank
-                if pb.min_rank and pb.min_count:
-                    # User Request Override: Seimitsu (精) on Mon/Tue/Thu/Sat allows Rank D (ignore Min B).
-                    skip_min_rank = False
-                    if l_code == '精':
-                         weekday = current_date.weekday()
-                         if weekday in [0, 1, 3, 5]: # Mon, Tue, Thu, Sat
-                             skip_min_rank = True
-                    
-                    if not skip_min_rank:
-                        qualified = [v for s, v in vars_s_loc 
-                                     if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= pb.min_rank]
-                        if qualified:
-                            actual_req = location_needs.get(l_code, 0)
-                            adjusted_min_count = min(pb.min_count, actual_req)
-                            model.Add(sum(qualified) >= adjusted_min_count)
+            if l_code in pb_map and l_code != 'クMR':
+                for pb in pb_map[l_code]:
+                    # PB-01: Min Rank
+                    if pb.min_rank and pb.min_count:
+                        # User Request Override: Seimitsu (精) on Mon/Tue/Thu/Sat allows Rank D (ignore Min B).
+                        skip_min_rank = False
+                        if l_code == '精':
+                             weekday = current_date.weekday()
+                             if weekday in [0, 1, 3, 5]: # Mon, Tue, Thu, Sat
+                                 skip_min_rank = True
                         
-                # PB-02: CD Cap
-                if pb.cd_cap is not None:
-                    cd_vars = [v for s, v in vars_s_loc 
-                               if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) in [SkillRank.C, SkillRank.D]]
-                    if cd_vars:
-                         model.Add(sum(cd_vars) <= pb.cd_cap)
-                         
-                # PB-03: D Solo Ban
-                if pb.d_solo_ban:
-                    req_num = location_needs.get(l_code, 0)
-                    if req_num >= 2:
-                        non_d_vars = [v for s, v in vars_s_loc 
-                                      if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) > SkillRank.D]
-                        if non_d_vars:
-                            model.Add(sum(non_d_vars) >= 1)
+                        if not skip_min_rank:
+                            qualified = [v for s, v in vars_s_loc 
+                                         if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= pb.min_rank]
+                            if qualified:
+                                actual_req = location_needs.get(l_code, 0)
+                                adjusted_min_count = min(pb.min_count, actual_req)
+                                model.Add(sum(qualified) >= adjusted_min_count)
+                            
+                    # PB-02: CD Cap
+                    if pb.cd_cap is not None:
+                        cd_vars = [v for s, v in vars_s_loc 
+                                   if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) in [SkillRank.C, SkillRank.D]]
+                        if cd_vars:
+                             model.Add(sum(cd_vars) <= pb.cd_cap)
+                             
+                    # PB-03: D Solo Ban
+                    if pb.d_solo_ban:
+                        req_num = location_needs.get(l_code, 0)
+                        if req_num >= 2:
+                            non_d_vars = [v for s, v in vars_s_loc 
+                                          if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) > SkillRank.D]
+                            if non_d_vars:
+                                model.Add(sum(non_d_vars) >= 1)
 
             # --- Specific Rules (PB-04, PB-05) ---
             
