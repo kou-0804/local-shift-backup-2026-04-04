@@ -31,6 +31,7 @@ class Staff:
     night_mr: bool = False
     night_angio: bool = False
     night_cath: bool = False
+    night_hb: bool = False
     
     def __hash__(self):
         return hash(self.id)

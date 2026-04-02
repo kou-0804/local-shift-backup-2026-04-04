@@ -49,7 +49,7 @@ class DayScheduler:
 
     def schedule(self, 
                  requests: List[Request], 
-                 night_assignments: List[NightAssignment]) -> List[DayAssignment]:
+                 night_assignments: List[NightAssignment]) -> Tuple[List[DayAssignment], Dict[date, Dict[str, int]]]:
         
         all_assignments = []
         assignment_history = [] # List of {staff_id: location_code} per day
@@ -69,12 +69,15 @@ class DayScheduler:
             night_map[(na.staff_id, na.date)] = True
             
         # Day-by-Day Scheduling Loop
+        daily_location_needs = {}
+        
         for d in self.dates:
             print(f"Scheduling Day: {d}")
             prev_assignments = assignment_history[-1] if assignment_history else {}
             
-            day_assignments = self._schedule_one_day(d, req_map, night_map, prev_assignments, assignment_counts, consecutive_work_days)
+            day_assignments, location_needs = self._schedule_one_day(d, req_map, night_map, prev_assignments, assignment_counts, consecutive_work_days)
             all_assignments.extend(day_assignments)
+            daily_location_needs[d] = location_needs
             
             # Record history
             current_day_map = {a.staff_id: a.location_code for a in day_assignments}
@@ -110,7 +113,7 @@ class DayScheduler:
                 else:
                     consecutive_work_days[s.id] = 0
             
-        return all_assignments
+        return all_assignments, daily_location_needs
 
     def _schedule_one_day(self, 
                           current_date: date, 
@@ -118,7 +121,7 @@ class DayScheduler:
                           night_map: Dict[Tuple[str, date], bool],
                           prev_assignments: Dict[str, str],
                           assignment_counts: Dict[str, Dict[str, int]],
-                          consecutive_work_days: Dict[str, int]) -> List[DayAssignment]:
+                          consecutive_work_days: Dict[str, int]) -> Tuple[List[DayAssignment], Dict[str, int]]:
         
         model = cp_model.CpModel()
         weekday = current_date.weekday() # 0=Mon, 6=Sun
@@ -575,14 +578,14 @@ class DayScheduler:
         
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
             result = self._extract_day_solution(solver, x, current_date, self.skills)
-            return result + forced_holidays # Merged result
+            return result + forced_holidays, location_needs
         else:
             print(f"FAILED to schedule day: {current_date}")
             # Debug: Print active constraints or resource shortage
             print(f"  Weekday: {weekday}")
             print(f"  Active Locations: {[l.code for l in target_locations]}")
             print(f"  Available Staff Count: {len(available_staff)}")
-            return forced_holidays # Return at least forced ones
+            return forced_holidays, location_needs
 
     def _extract_day_solution(self, solver, x, date, skills) -> List[DayAssignment]:
         res = []

@@ -369,7 +369,7 @@ def main():
         month=month
     )
     
-    day_result_list = day_scheduler.schedule(requests, full_night_assignments) # Pass Full List
+    day_result_list, daily_location_needs = day_scheduler.schedule(requests, full_night_assignments) # Pass Full List
     print(f"  日勤配置数: {len(day_result_list)}件", flush=True)
     print(flush=True)
 
@@ -420,6 +420,31 @@ def main():
                 requests_dict[d_day] = {}
             requests_dict[d_day][r.staff_id] = r.symbol
 
+    # ── Validation (Configure Validation Errors) ──
+    print("🔍 最終検証・エラーレポート作成中...", flush=True)
+    validation_errors = []
+    
+    # 1. Day Shift Understaffing Check
+    for d, loc_needs in daily_location_needs.items():
+        d_day = d.day
+        for loc_code, required in loc_needs.items():
+            if required > 0:
+                assigned_count = len(day_assignments_dict.get(d_day, {}).get(loc_code, []))
+                if assigned_count < required:
+                    validation_errors.append(f"{d.month}月{d.day}日: [{loc_code}] の配置人数が不足しています (目標: {required}人 / 実際: {assigned_count}人)")
+                    
+    # 2. Night Shift HB Coverage Check
+    for d_day, assigns in night_assignments_dict.items():
+        night_staff_objs = [s for s in technicians if s.id in assigns]
+        has_hb = any(getattr(s, 'night_hb', False) for s in night_staff_objs)
+        if not has_hb:
+            validation_errors.append(f"{month}月{d_day}日: 夜勤メンバーにHB対応可能者がいないため代替処理を行いました (※本日の拘束枠でHBカバー)")
+            
+    if not validation_errors:
+         print("  ✅ 全ての要件が正常に満たされています")
+    else:
+         print(f"  ⚠️ {len(validation_errors)}件の警告が発生しました")
+
     # Excel出力
     print("📊 Excel生成中...", flush=True)
     os.makedirs(args.output_dir, exist_ok=True)
@@ -434,7 +459,8 @@ def main():
         requests=requests_dict,
         on_call_assignments=on_call_assignments,
         name_mapper=None, # Optional if not used
-        daikyu_counts=daikyu_counts
+        daikyu_counts=daikyu_counts,
+        validation_errors=validation_errors
     )
     generator.generate(output_path)
     print(flush=True)

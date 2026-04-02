@@ -21,7 +21,8 @@ class ExcelGenerator:
         requests: Dict[int, Dict[str, str]], # {day: {staff_id: symbol}}
         on_call_assignments: Dict[int, Dict[str, str]] = None,
         name_mapper=None,
-        daikyu_counts: Dict[str, int] = None
+        daikyu_counts: Dict[str, int] = None,
+        validation_errors: List[str] = None
     ):
         self.year = year
         self.month = month
@@ -32,6 +33,7 @@ class ExcelGenerator:
         self.on_call_assignments = on_call_assignments or {}
         self.name_mapper = name_mapper
         self.daikyu_counts = daikyu_counts or {}
+        self.validation_errors = validation_errors or []
         
         self.days_in_month = calendar.monthrange(year, month)[1]
         
@@ -47,6 +49,9 @@ class ExcelGenerator:
         self._create_weekday_row()
         self._fill_assignments()
         self._apply_formatting()
+        
+        if self.validation_errors is not None:
+            self._create_validation_report_sheet()
         
         self.wb.save(output_path)
         print(f"✓ 勤務表を保存: {output_path}")
@@ -282,3 +287,36 @@ class ExcelGenerator:
         for i in range(len(self.stats_columns)):
              col_letter = openpyxl.utils.get_column_letter(stats_start_col + i)
              self.ws.column_dimensions[col_letter].width = 4
+
+    def _create_validation_report_sheet(self):
+        """検証レポートシートを作成"""
+        ws_val = self.wb.create_sheet('検証レポート(自動診断)')
+        
+        ws_val['A1'] = f"{self.year}年{self.month}月 勤務表 検証レポート"
+        ws_val.merge_cells('A1:E1')
+        ws_val['A1'].font = Font(size=14, bold=True)
+        
+        if not self.validation_errors:
+            ws_val['A3'] = "状態: ✅ 正常"
+            ws_val['A3'].font = Font(color='0070C0', bold=True) # 濃い青/緑系の代替
+            ws_val['A5'] = "すべての配置・スキル要件が正常に満たされています。"
+        else:
+            ws_val['A3'] = f"状態: ⚠️ {len(self.validation_errors)}件の警告あり"
+            ws_val['A3'].font = Font(color='FF0000', bold=True)
+            
+            ws_val['A5'] = "【レポート詳細】"
+            ws_val['A5'].font = Font(bold=True)
+            
+            row = 6
+            for error in self.validation_errors:
+                ws_val[f'A{row}'] = f"- {error}"
+                
+                # エラーの種類によって文字色を分ける
+                if "不足" in error:
+                    ws_val[f'A{row}'].font = Font(color='C00000') # 濃い赤
+                elif "代替処理" in error:
+                    ws_val[f'A{row}'].font = Font(color='E36C0A') # オレンジ
+                    
+                row += 1
+                
+        ws_val.column_dimensions['A'].width = 100

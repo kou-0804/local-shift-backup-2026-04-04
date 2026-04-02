@@ -239,6 +239,18 @@ class NightScheduler:
     def _add_soft_constraints(self, model, x, night_quotas, prev_map):
         penalties = []
         
+        # NS-08: HB Coverage (Weight 100,000 - HIGH PRIORITY)
+        # Try to ensure at least 1 person has night_hb skill.
+        WEIGHT_HB_COVERAGE = 100000
+        hb_staff = [s for s in self.night_staff if getattr(s, 'night_hb', False)]
+        if hb_staff:
+            for d in self.dates:
+                uncovered_hb = model.NewBoolVar(f'uncovered_hb_{d}')
+                hb_sum = sum(x[s.id, d] for s in hb_staff)
+                model.Add(hb_sum >= 1).OnlyEnforceIf(uncovered_hb.Not())
+                model.Add(hb_sum == 0).OnlyEnforceIf(uncovered_hb)
+                penalties.append(uncovered_hb * WEIGHT_HB_COVERAGE)
+        
         # NS-04: Quota Adherence (Weight 1,000,000 - STRICTEST PRIORITY)
         # Because Total Quota (90) != Required (93), we must allow slight deviation (+3 total).
         WEIGHT_QUOTA = 1000000

@@ -42,6 +42,9 @@ class DataLoader:
             
             cath_rank = s_skills.get('心', SkillRank.NONE)
             staff.night_cath = (cath_rank >= SkillRank.B)
+            
+            hb_rank = s_skills.get('HB', SkillRank.NONE)
+            staff.night_hb = (hb_rank >= SkillRank.B)
 
         # 4. Apply Overrides from Night Skill List
         night_skill_path = os.path.join(self.data_dir, "夜勤スキル一覧.csv")

@@ -32,6 +32,13 @@ class OnCallScheduler:
         active_staff = [s for s in self.staff_list if s.status == '在籍' and getattr(s, 'can_oncall', True)]
         oncall_counts = {s.id: 0 for s in active_staff}
         staff_exp = {s.id: s.experience_years for s in active_staff}
+        staff_night_hb = {s.id: getattr(s, 'night_hb', False) for s in active_staff}
+        
+        night_hb_covered = {}
+        for day in range(1, self.days_in_month + 1):
+            day_d = date(self.year, self.month, day)
+            assigned_night = [s for s in active_staff if night_map.get((s.id, day_d))]
+            night_hb_covered[day] = any(getattr(s, 'night_hb', False) for s in assigned_night)
         
         oncall_results = {}
         LATE_LOCATIONS = {'遅番', '超遅', 'ク遅', 'M遅'}
@@ -55,6 +62,8 @@ class OnCallScheduler:
             is_today_hol = self._is_holiday(d)
             is_tmrw_hol = self._is_holiday(d_next)
             
+            night_lacks_hb = not night_hb_covered.get(day, True)
+            
             result = {}
             
             if is_today_hol:
@@ -74,6 +83,8 @@ class OnCallScheduler:
                         score = oncall_counts[sid]
                         if res_1 and staff_exp.get(res_1, 10) < penalty_threshold and staff_exp.get(sid, 10) < penalty_threshold:
                             score += 100
+                        if night_lacks_hb and staff_night_hb.get(sid, False):
+                            score -= 1000
                         return score
                         
                     today_day_staff.sort(key=score_fn)
@@ -99,6 +110,8 @@ class OnCallScheduler:
                         score = oncall_counts[sid]
                         if res_1 and staff_exp.get(res_1, 10) < penalty_threshold and staff_exp.get(sid, 10) < penalty_threshold:
                             score += 100
+                        if night_lacks_hb and staff_night_hb.get(sid, False):
+                            score -= 1000
                         return score
                         
                     tmrw_day_staff.sort(key=score_fn)
@@ -126,7 +139,13 @@ class OnCallScheduler:
                     candidates.append(s.id)
                     
                 if len(candidates) >= 1:
-                    candidates.sort(key=lambda sid: oncall_counts[sid])
+                    def first_score_fn(sid):
+                        score = oncall_counts[sid]
+                        if night_lacks_hb and staff_night_hb.get(sid, False):
+                            score -= 1000
+                        return score
+                        
+                    candidates.sort(key=first_score_fn)
                     res_1 = candidates[0]
                     result['第1拘束'] = res_1
                     oncall_counts[res_1] += 1
@@ -139,6 +158,8 @@ class OnCallScheduler:
                             score = oncall_counts[sid]
                             if staff_exp.get(res_1, 10) < penalty_threshold and staff_exp.get(sid, 10) < penalty_threshold:
                                 score += 100
+                            if night_lacks_hb and staff_night_hb.get(sid, False):
+                                score -= 1000
                             return score
                         remaining.sort(key=score_fn)
                         result['第2拘束'] = remaining[0]
