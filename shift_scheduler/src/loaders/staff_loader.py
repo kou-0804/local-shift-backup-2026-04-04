@@ -16,6 +16,12 @@ class StaffLoader:
                 # Handle boolean conversion for night shift capability
                 can_night_shift = str(row['夜勤可否']).strip() == '○'
                 
+                can_oncall = True
+                if '拘束可否' in df.columns:
+                    val = str(row['拘束可否']).strip()
+                    if val == '×':
+                        can_oncall = False
+                
                 staff = Staff(
                     id=str(row['技師ID']),
                     name=str(row['氏名']),
@@ -23,7 +29,8 @@ class StaffLoader:
                     experience_years=int(row['経験年数']),
                     can_night_shift=can_night_shift,
                     status=str(row['在籍状況']),
-                    note=str(row['備考']) if pd.notna(row['備考']) else ""
+                    note=str(row['備考']) if pd.notna(row['備考']) else "",
+                    can_oncall=can_oncall
                 )
                 staff_list.append(staff)
             except Exception as e:

@@ -25,6 +25,7 @@ class Staff:
     can_night_shift: bool
     status: str
     note: str = ""
+    can_oncall: bool = True
     
     # 夜勤スキル（導出値）
     night_mr: bool = False

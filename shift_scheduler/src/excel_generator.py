@@ -19,6 +19,7 @@ class ExcelGenerator:
         night_assignments: Dict[int, List[str]],
         day_assignments: Dict[int, Dict[str, List[str]]],
         requests: Dict[int, Dict[str, str]], # {day: {staff_id: symbol}}
+        on_call_assignments: Dict[int, Dict[str, str]] = None,
         name_mapper=None,
         daikyu_counts: Dict[str, int] = None
     ):
@@ -28,6 +29,7 @@ class ExcelGenerator:
         self.night_assignments = night_assignments
         self.day_assignments = day_assignments
         self.requests = requests
+        self.on_call_assignments = on_call_assignments or {}
         self.name_mapper = name_mapper
         self.daikyu_counts = daikyu_counts or {}
         
@@ -159,6 +161,30 @@ class ExcelGenerator:
                 self.ws[f'{col_letter}{row}'].alignment = Alignment(horizontal='center')
 
             row += 1
+
+        # Add On-Call rows
+        if self.on_call_assignments:
+            oncall_labels = ['第1拘束', '第2拘束']
+            staff_dict = {t.id: t.name for t in self.technicians}
+            
+            for label in oncall_labels:
+                self.ws[f'A{row}'] = ''
+                self.ws[f'B{row}'] = label
+                
+                for day in range(1, self.days_in_month + 1):
+                    col = self._day_to_column(day)
+                    
+                    assigned_staff_id = self.on_call_assignments.get(day, {}).get(label)
+                    if assigned_staff_id:
+                        # Extract lastname for shorter display
+                        name = staff_dict.get(assigned_staff_id, assigned_staff_id)
+                        # Name usually looks like '佐藤(海)'. User's template shows '佐藤海'.
+                        # I'll strip parentheses for oncall display
+                        name = name.replace('(', '').replace(')', '').replace(' ', '').replace('　', '')
+                        self.ws[f'{col}{row}'] = name
+                    self.ws[f'{col}{row}'].alignment = Alignment(horizontal='center')
+                    
+                row += 1
 
     def _get_assignment_text(self, tech_id: str, day: int) -> str:
         """配置テキストを取得"""

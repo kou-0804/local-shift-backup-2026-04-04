@@ -385,6 +385,17 @@ def main():
     )
     print(flush=True)
     
+    # ===== Post-Processing: Assign On-Call (拘束) =====
+    print("📞 拘束（オンコール）自動配置中...", flush=True)
+    from shift_scheduler.src.schedulers.oncall_scheduler import OnCallScheduler
+    oncall_scheduler = OnCallScheduler(
+        staff_list=technicians,
+        year=year,
+        month=month
+    )
+    on_call_assignments, on_call_counts = oncall_scheduler.schedule(day_result_list, full_night_assignments, requests)
+    print(flush=True)
+    
     # Data Conversion: List[DayAssignment] -> Dict[int, Dict[str, List[str]]]
     # {day: {loc_code: [tech_id]}}
     day_assignments_dict = {}
@@ -403,22 +414,7 @@ def main():
     # Requests Conversion
     requests_dict = {}
     for r in requests:
-        # Note: Do not filter by month strictly, as user wants surrounding days too.
-        # if r.date.month != month: continue 
-        
         d_day = r.date.day
-        # Only add to requests_dict (for Excel) if it falls within THIS month?
-        # ExcelGenerator iterates `range(1, days_in_month+1)`.
-        # If we put day 32 or day -1, it won't be displayed but won't crash.
-        # However, `d_day = r.date.day` for different month might clash if we just use `.day`.
-        # e.g. Dec 1st vs Jan 1st.
-        # We need to filter for Excel display to ONLY this month.
-        # But for Scheduler, we passed the raw list `requests`.
-        # Schedulers use `req_map = {(r.staff_id, r.date): ...}` which handles full date.
-        # So passing raw `requests` list to schedulers is fine.
-        
-        # Here we build `requests_dict` for Excel Generator.
-        # Excel Generator iterates 1..31.
         if r.date.year == year and r.date.month == month:
             if d_day not in requests_dict:
                 requests_dict[d_day] = {}
@@ -436,6 +432,7 @@ def main():
         night_assignments=night_assignments_dict,
         day_assignments=day_assignments_dict,
         requests=requests_dict,
+        on_call_assignments=on_call_assignments,
         name_mapper=None, # Optional if not used
         daikyu_counts=daikyu_counts
     )
