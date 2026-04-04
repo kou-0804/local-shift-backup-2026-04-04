@@ -58,10 +58,10 @@ class NightSkillDeriver:
             ns = NightSkill(staff_id)
             
             # 判定ロジック (Phase 1 準拠)
-            # MR: 病院MR >= C or クMR >= C
+            # MR: 病院MR >= C or CLMR >= C
             mr_h = staff_skills.get('病院MR', SkillRank.NONE)
-            mr_c = staff_skills.get('クMR', SkillRank.NONE)
-            if mr_h >= SkillRank.C or mr_c >= SkillRank.C:
+            mr_c = staff_skills.get('CLMR', SkillRank.NONE)
+            if (mr_h >= SkillRank.C) or (mr_c >= SkillRank.C):
                 ns.mr_skill = True
                 
             # Angio: ア >= C

@@ -20,7 +20,9 @@ cd ~/Desktop/"local-shift ver1"
 
 ### 手順3: プログラムの準備（仮想環境の有効化）
 以下のコマンドを入力し、Enterキーを押してください。
-
+```bash
+source .venv/bin/activate
+```
 
 ※ 成功すると、コマンドの行頭に `(.venv)` という文字が表示されます。
 
@@ -30,9 +32,6 @@ cd ~/Desktop/"local-shift ver1"
 
 ```bash
 python main.py --year 2026 --month 1
-
-cd /Users/kohei/Desktop/local-shift\ ver1
-source shift_scheduler/venv/bin/activate && python main.py --year 2026 --month 2
 ```
 
 

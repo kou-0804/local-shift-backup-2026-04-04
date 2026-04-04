@@ -34,7 +34,7 @@ class DataLoader:
         for staff in staff_list:
             s_skills = skills.get(staff.id, {})
             
-            mr_rank = max(s_skills.get('病院MR', SkillRank.NONE), s_skills.get('クMR', SkillRank.NONE))
+            mr_rank = max(s_skills.get('病院MR', SkillRank.NONE), s_skills.get('CLMR', SkillRank.NONE))
             staff.night_mr = (mr_rank >= SkillRank.B)
             
             angio_rank = s_skills.get('ア', SkillRank.NONE)
@@ -235,4 +235,53 @@ class DataLoader:
             return results
         except Exception as e:
             print(f"Error loading Excel history: {e}")
+            return []
+
+    def load_training_rules(self, staff_list: List[Staff]) -> List[Dict]:
+        """業務拡大マスタ（育成ルール）を読み込む"""
+        path = os.path.join(self.data_dir, "業務拡大マスタ_確定版.csv")
+        if not os.path.exists(path):
+            return []
+            
+        import pandas as pd
+        try:
+            df = pd.read_csv(path, encoding='utf-8')
+            rules = []
+            
+            # Helper to match partial string name to staff.id
+            def map_names_to_ids(names_str: str) -> List[str]:
+                if not isinstance(names_str, str) or not names_str.strip(): return []
+                names = [n.strip() for n in names_str.replace('，', ',').split(',')]
+                ids = []
+                for n in names:
+                    if not n: continue
+                    # Find matching staff (ignore spaces in staff list)
+                    matched_id = None
+                    for s in staff_list:
+                        clean_staff_name = s.name.replace(' ', '').replace('　', '')
+                        if n in clean_staff_name:
+                            matched_id = s.id
+                            break
+                    if matched_id:
+                        ids.append(matched_id)
+                    else:
+                        print(f"Warning: Training Name '{n}' not found in Staff Master.")
+                return ids
+
+            for _, row in df.iterrows():
+                modality = str(row['対象モダリティ']).strip()
+                instructors = map_names_to_ids(row.get('指導者名_カンマ区切り', ''))
+                trainees = map_names_to_ids(row.get('育成対象者名_カンマ区切り', ''))
+                
+                if modality and instructors and trainees:
+                    rules.append({
+                        'modality': modality,
+                        'instructors': instructors,
+                        'trainees': trainees
+                    })
+            if rules:
+                print(f"  育成・業務拡大ルール: {len(rules)}件ロードしました")
+            return rules
+        except Exception as e:
+            print(f"Error loading Training Rules: {e}")
             return []

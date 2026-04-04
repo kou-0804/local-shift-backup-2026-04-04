@@ -84,7 +84,7 @@ class ExcelGenerator:
 
         # Stats Header
         stats_start_col = self.days_in_month + 3
-        self.stats_columns = ['夜勤', '病院MR', 'クMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '超遅', 'ク遅', 'M遅', '代休']
+        self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '超遅', 'ク遅', 'M遅', '代休']
         
         for i, label in enumerate(self.stats_columns):
             col_idx = stats_start_col + i
@@ -128,7 +128,7 @@ class ExcelGenerator:
             
             # カウンター初期化
             if not hasattr(self, 'stats_columns'):
-                self.stats_columns = ['夜勤', '病院MR', 'クMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '超遅', 'ク遅', 'M遅', '代休']
+                self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '超遅', 'ク遅', 'M遅', '代休']
             counts = {label: 0 for label in self.stats_columns}
             
             # 各日の配置

@@ -13,12 +13,14 @@ from ..models.assignment import DayAssignment, NightAssignment
 
 class DayScheduler:
     def __init__(self, staff_list: List[Staff], locations: List[Location], rules: List[SpecialRule], 
-                 skills: Dict[str, Dict[str, SkillRank]], pb_rules: List[PowerBalance], year: int, month: int):
+                 skills: Dict[str, Dict[str, SkillRank]], pb_rules: List[PowerBalance], 
+                 year: int, month: int, training_rules: List[Dict] = None):
         self.staff_list = staff_list
         self.locations = locations
         self.rules = rules
         self.skills = skills
         self.pb_rules = pb_rules
+        self.training_rules = training_rules or []
         self.year = year
         self.month = month
         self.dates = self._generate_dates()
@@ -28,7 +30,7 @@ class DayScheduler:
         
         # Pre-calc MRI-only staff
         self.mri_only_staff = set()
-        mri_locs = {'病院MR', 'クMR', 'M遅'}
+        mri_locs = {'病院MR', 'CLMR', 'M遅'}
         ignore_locs = {'出', '超遅', 'ク遅', '遅番', '勤務表作成'}
         for s in self.staff_list:
             has_mri = False
@@ -42,6 +44,24 @@ class DayScheduler:
             if has_mri and not has_other:
                 self.mri_only_staff.add(s.id)
         
+    def _get_base_location_code(self, loc_code: str) -> str:
+        """複合・派生シフトコードを基本業務コードに正規化する。
+        例: 'ク/17業' -> 'ク', 'ク遅' -> 'ク', 'M遅' -> 'CLMR', '(ア)' -> 'ア'
+        """
+        # 育成枠 (ア) → ア
+        if loc_code.startswith('(') and loc_code.endswith(')'):
+            return loc_code[1:-1]
+        # ク遅 → ク
+        if loc_code == 'ク遅':
+            return 'ク'
+        # M遅 → CLMR（クリニックMRIの遅番）
+        if loc_code == 'M遅':
+            return 'CLMR'
+        # '[業務名]/17業' や '[業務名]/17休' → [業務名]
+        if '/17業' in loc_code or '/17休' in loc_code:
+            return loc_code.split('/')[0]
+        return loc_code
+
     def _generate_dates(self) -> List[date]:
         import calendar
         num_days = calendar.monthrange(self.year, self.month)[1]
@@ -83,10 +103,11 @@ class DayScheduler:
             current_day_map = {a.staff_id: a.location_code for a in day_assignments}
             assignment_history.append(current_day_map)
             
-            # Update cumulative counts
+            # Update cumulative counts（正規化したコードで管理して均等化の精度を上げる）
             for a in day_assignments:
                 c = assignment_counts[a.staff_id]
-                c[a.location_code] = c.get(a.location_code, 0) + 1
+                base_code = self._get_base_location_code(a.location_code)
+                c[base_code] = c.get(base_code, 0) + 1
             
             # Update consecutive work days
             for s in self.staff_list:
@@ -189,10 +210,10 @@ class DayScheduler:
                             location_needs[rule.location_code] = rule.required_count
 
             # Clinic Holiday: 3rd Saturday -> All Clinic locations closed
-            # Clinic Codes: 'クMR', 'ク', 'DR' (Confirmed via Master)
+            # Clinic Codes: 'CLMR', 'ク', 'DR' (Confirmed via Master)
             # Weekday 5 = Sat. Week 3 = 3rd occurrence.
             if weekday == 5 and current_week_num == 3:
-                 clinic_codes = ['クMR', 'ク', 'DR', 'CT', 'MG', 'ク遅', 'M遅']
+                 clinic_codes = ['CLMR', 'ク', 'DR', 'CT', 'MG', 'ク遅', 'M遅']
                  # Remove from needs
                  for c in clinic_codes:
                      if c in location_needs:
@@ -258,6 +279,27 @@ class DayScheduler:
         # Deduct Wednesday female Gyohai from 'ク' needs
         if female_gyohai_wed > 0 and 'ク' in location_needs:
             location_needs['ク'] = max(0, location_needs['ク'] - female_gyohai_wed)
+
+        # 1.5 Setup Training Locations based on training_rules
+        training_mappings = []
+        if not is_holiday:
+            for r in self.training_rules:
+                modality = r['modality']
+                # Check if modality is in target_locations
+                if any(l.code == modality for l in target_locations):
+                    # Yes, create dummy location
+                    dummy_code = f"({modality})"
+                    dummy_loc = Location(dummy_code, f"{modality}育成", "育成", {}, "なし", 99, True)
+                    # Add to target locations
+                    if not any(l.code == dummy_code for l in target_locations):
+                        target_locations.append(dummy_loc)
+                        location_needs[dummy_code] = len(r['trainees'])
+                        training_mappings.append({
+                            'modality': modality,
+                            'dummy_code': dummy_code,
+                            'instructors': r['instructors'],
+                            'trainees': r['trainees']
+                        })
 
         # 17 constraints (DH-08, 09, 10)
         # '17業', '17休', 'SameDayNight' -> No Late Shifts
@@ -438,16 +480,20 @@ class DayScheduler:
                 
                 # Maximization term (Req 2)
                 base_score = 10000
-                if s.id in self.mri_only_staff and l_code in ['病院MR', 'クMR', 'M遅']:
+                if l_code.startswith('(') and l_code.endswith(')'):
+                    base_score = 5000 # Lower priority: Only fill if staff is free
+                    
+                if s.id in self.mri_only_staff and l_code in ['病院MR', 'CLMR', 'M遅']:
                     base_score = 500000  # Massive bonus to prioritize MRI-only staff
                 maximization_objective.append(x[s.id, l_code] * base_score)
 
                 # Soft Constraint for Fairness (Equalize Counts)
-                # Equalize ALL locations across staff to prevent bias
-                count = assignment_counts[s.id].get(l_code, 0)
+                # 正規化したベースコードのカウントを参照することで、ク遅・/17業などを統合して均等化する
+                base_l_code = self._get_base_location_code(l_code)
+                count = assignment_counts[s.id].get(base_l_code, 0)
                 if count > 0:
-                    # M遅の均等化を特に強める（ペナルティの重みを大幅に増やす）
-                    weight = 10000 if l_code == 'M遅' else 20
+                    # 均等化の重みを 20 → 150 に強化（偏りをより積極的に解消する）
+                    weight = 150
                     fairness_penalties.append(x[s.id, l_code] * (count * weight))
 
                 # Special Monthly Bonus Rule for Ono (T014) and Kawana (T026) -> strictly 6 'ク' assignments
@@ -506,11 +552,34 @@ class DayScheduler:
             vars_l = [x[s.id, loc.code] for s in available_staff if (s.id, loc.code) in x]
             model.Add(sum(vars_l) <= req) # Req 2: Allow understaffing if impossible
             
+        # Add Training Restrictions
+        for tm in training_mappings:
+            dummy_code = tm['dummy_code']
+            modality = tm['modality']
+            
+            # Constraint: A trainee can only be assigned to dummy_loc if at least one instructor is assigned to modality
+            ins_vars = [x[s_id, modality] for s_id in tm['instructors'] if (s_id, modality) in x]
+            if not ins_vars:
+                # No instructor available or configured properly, force dummy to 0
+                for s in available_staff:
+                    if (s.id, dummy_code) in x:
+                        model.Add(x[s.id, dummy_code] == 0)
+                continue
+                
+            ins_sum = sum(ins_vars)
+            
+            for s in available_staff:
+                if (s.id, dummy_code) in x:
+                    if s.id in tm['trainees']:
+                        model.Add(x[s.id, dummy_code] <= ins_sum)
+                    else:
+                        model.Add(x[s.id, dummy_code] == 0)
+
         # 5. Power Balance (PB-xx)
         self._add_power_balance_constraints(model, x, target_locations, location_needs, available_staff, current_date, weekday, female_gyohai_wed, gyohai_has_veteran)
 
-        # 5.5 クMR Special Rule (SR-クMR)
-        l_code = 'クMR'
+        # 5.5 CLMR Special Rule (SR-CLMR)
+        l_code = 'CLMR'
         if l_code in [loc.code for loc in target_locations]:
             v_s = [(s, x[s.id, l_code]) for s in available_staff if (s.id, l_code) in x]
             if v_s:
@@ -618,7 +687,7 @@ class DayScheduler:
             if not vars_loc_only: continue
 
             # --- Generic Rules (PB-01, PB-02, PB-03) ---
-            if l_code in pb_map and l_code != 'クMR':
+            if l_code in pb_map and l_code != 'CLMR':
                 for pb in pb_map[l_code]:
                     # PB-01: Min Rank
                     if pb.min_rank and pb.min_count:

@@ -273,6 +273,7 @@ def main():
         
     technicians = staff_list # Alias
     special_rules = rules
+    training_rules = loader.load_training_rules(technicians)
     
     print(f"  技師: {len(technicians)}名", flush=True)
     print(f"  勤務場所: {len(locations)}箇所", flush=True)
@@ -365,6 +366,7 @@ def main():
         locations=locations,
         pb_rules=pb_rules,
         rules=special_rules,
+        training_rules=training_rules,
         year=year,
         month=month
     )
@@ -428,6 +430,8 @@ def main():
     for d, loc_needs in daily_location_needs.items():
         d_day = d.day
         for loc_code, required in loc_needs.items():
+            if loc_code.startswith('(') and loc_code.endswith(')'):
+                continue # Skip dummy training locations from understaffing warnings
             if required > 0:
                 assigned_count = len(day_assignments_dict.get(d_day, {}).get(loc_code, []))
                 if assigned_count < required:
