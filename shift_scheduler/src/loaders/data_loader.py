@@ -285,3 +285,25 @@ class DataLoader:
         except Exception as e:
             print(f"Error loading Training Rules: {e}")
             return []
+
+    def load_monthly_holidays(self, year: int, month: int) -> int:
+        """指定された年月の公休数をマスタから読み込む（デフォルト：9日）"""
+        path = os.path.join(self.data_dir, "公休数マスタ_確定版.csv")
+        default_days = 9
+        if not os.path.exists(path):
+            return default_days
+            
+        import pandas as pd
+        try:
+            df = pd.read_csv(path, encoding='utf-8')
+            # 形式: 2026/04
+            target_str = f"{year}/{month:02d}"
+            
+            match = df[df['年月'] == target_str]
+            if not match.empty:
+                return int(match.iloc[0]['公休数'])
+            
+            return default_days
+        except Exception as e:
+            print(f"Error loading Monthly Holidays: {e}")
+            return default_days

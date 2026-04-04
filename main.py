@@ -14,16 +14,17 @@ from shift_scheduler.src.models.skill import SkillRank
 from datetime import date, timedelta
 
 
-def assign_nine_off_days(
+def assign_monthly_off_days(
     technicians,
     day_result_list,
     night_assignments,
     requests,
     year: int,
     month: int,
+    target_holidays: int = 9,
 ) -> Tuple[list, Dict[str, int]]:
     """出力済みシフト表に対してポスト処理：
-    各スタッフに月業合計の休みみが最低9日になるよう「休」を自動添加する。
+    各スタッフに月間の指定された公休数（target_holidays）になるよう「休」を自動添加する。
     ・休み深廓になるまで自動休を増やす
     ・6連勤超過を避けるための送「休」も含む
     ・休暴希望（★/☆）との視覚的区別を保つ
@@ -101,9 +102,9 @@ def assign_nine_off_days(
         blank_days = [dn for dn, v in status.items() if v == 'blank']
         explicit_off = sum(1 for v in status.values() if v == 'off')  # already has marker
         
-        # We want total visible off = 9
-        # Explicit offs already have markers. Blank days need markers to reach 9 visible
-        needed = 9 - explicit_off  # How many '休' markers to add (on blank days)
+        # We want total visible off = target_holidays
+        # Explicit offs already have markers. Blank days need markers to reach target_holidays visible
+        needed = target_holidays - explicit_off  # How many '休' markers to add (on blank days)
         needed = max(0, min(needed, len(blank_days)))  # Can't add more than blanks available
 
         # --- Step 3: Greedily pick 'free' days to become 休 ---
@@ -209,9 +210,10 @@ def assign_nine_off_days(
         if not (da.date.year == year and da.date.month == month
                 and (da.staff_id, da.date.day) in overridden_work)
     ]
-    total_daikyu = sum(daikyu_counts.values())
-    print(f"✅ 9日休暮処理: {len(additional_holidays)}件の自動休を追加 ({len(overridden_work)}件の勤務割当を休に変更) - {total_daikyu}名に代休1日を付与")
-    return filtered_result + additional_holidays, daikyu_counts
+    total_daikyu = sum(1 for c in daikyu_counts.values() if c > 0)
+    print(f"✅ {target_holidays}日休職処理: {len(additional_holidays)}件の自動休を追加 ({len(overridden_work)}件の勤務割当を休に変更) - {total_daikyu}名に代休1日を付与")
+    
+    return list(filtered_result) + additional_holidays, daikyu_counts
 
 def main():
     parser = argparse.ArgumentParser(description='勤務表自動作成システム')
@@ -375,15 +377,17 @@ def main():
     print(f"  日勤配置数: {len(day_result_list)}件", flush=True)
     print(flush=True)
 
-    # ===== Post-Processing: Assign exactly 9 off-days per staff =====
-    print("📅 9日休暇自動配置中...", flush=True)
-    day_result_list, daikyu_counts = assign_nine_off_days(
+    # ===== Post-Processing: Assign exactly X off-days per staff =====
+    target_holidays = loader.load_monthly_holidays(year, month)
+    print(f"📅 {target_holidays}日休暇自動配置中...", flush=True)
+    day_result_list, daikyu_counts = assign_monthly_off_days(
         technicians=technicians,
         day_result_list=day_result_list,
         night_assignments=full_night_assignments,
         requests=requests,
         year=year,
         month=month,
+        target_holidays=target_holidays
     )
     print(flush=True)
     
