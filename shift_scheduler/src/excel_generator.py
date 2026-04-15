@@ -22,6 +22,7 @@ class ExcelGenerator:
         on_call_assignments: Dict[int, Dict[str, str]] = None,
         name_mapper=None,
         daikyu_counts: Dict[str, int] = None,
+        off_counts: Dict[str, int] = None,
         validation_errors: List[str] = None
     ):
         self.year = year
@@ -33,6 +34,7 @@ class ExcelGenerator:
         self.on_call_assignments = on_call_assignments or {}
         self.name_mapper = name_mapper
         self.daikyu_counts = daikyu_counts or {}
+        self.off_counts = off_counts or {}
         self.validation_errors = validation_errors or []
         
         self.days_in_month = calendar.monthrange(year, month)[1]
@@ -84,7 +86,7 @@ class ExcelGenerator:
 
         # Stats Header
         stats_start_col = self.days_in_month + 3
-        self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '超遅', 'ク遅', 'M遅', '代休']
+        self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '病L', '超遅', 'ク遅', 'M遅', '公休', '代休']
         
         for i, label in enumerate(self.stats_columns):
             col_idx = stats_start_col + i
@@ -113,7 +115,7 @@ class ExcelGenerator:
         """配置を記入"""
         row = 4
         
-        for tech in sorted(self.technicians, key=lambda t: t.id):
+        for tech in self.technicians:
             if tech.status != '在籍':
                 continue
             
@@ -128,7 +130,7 @@ class ExcelGenerator:
             
             # カウンター初期化
             if not hasattr(self, 'stats_columns'):
-                self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '超遅', 'ク遅', 'M遅', '代休']
+                self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '病L', '超遅', 'ク遅', 'M遅', '公休', '代休']
             counts = {label: 0 for label in self.stats_columns}
             
             # 各日の配置
@@ -154,7 +156,8 @@ class ExcelGenerator:
                     if p in counts:
                         counts[p] += 1
             
-            # 代休カウント
+            # 公休・代休カウント（assign_monthly_off_days の計算結果を使用）
+            counts['公休'] = self.off_counts.get(tech.id, 0)
             counts['代休'] = self.daikyu_counts.get(tech.id, 0)
             
             # 統計出力
@@ -266,7 +269,7 @@ class ExcelGenerator:
         )
         
         if not hasattr(self, 'stats_columns'):
-             self.stats_columns = ['夜勤', '超遅', 'MG', 'ク', 'ク遅', 'M遅', '遅番', '病CT', 'CT', '入', 'ポ', '精', 'HB', 'OP', '心', 'ア', 'DR', '代休']
+             self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '病L', '超遅', 'ク遅', 'M遅', '公休', '代休']
              
         max_col = self.days_in_month + 2 + len(self.stats_columns) # +2 for ID, Name
         

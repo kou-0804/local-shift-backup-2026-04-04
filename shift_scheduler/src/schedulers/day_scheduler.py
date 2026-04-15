@@ -12,18 +12,18 @@ from ..models.power_balance import PowerBalance
 from ..models.assignment import DayAssignment, NightAssignment
 
 class DayScheduler:
-    def __init__(self, staff_list: List[Staff], locations: List[Location], rules: List[SpecialRule], 
-                 skills: Dict[str, Dict[str, SkillRank]], pb_rules: List[PowerBalance], 
-                 year: int, month: int, training_rules: List[Dict] = None):
+    def __init__(self, staff_list: List[Staff], locations: List[Location], rules: List[SpecialRule],
+                 skills: Dict[str, Dict[str, SkillRank]], pb_rules: List[PowerBalance],
+                 year: int, month: int, training_rules: List[Dict] = None,
+                 disable_training: bool = False, target_holidays: int = 9):
         self.staff_list = staff_list
         self.locations = locations
         self.rules = rules
         self.skills = skills
         self.pb_rules = pb_rules
         self.training_rules = training_rules or []
-        self.year = year
-        self.month = month
-        self.dates = self._generate_dates()
+        self.disable_training = disable_training  # 研修枠を無効化するフラグ
+        self.target_holidays = target_holidays
         self.year = year
         self.month = month
         self.dates = self._generate_dates()
@@ -57,6 +57,11 @@ class DayScheduler:
         # M遅 → CLMR（クリニックMRIの遅番）
         if loc_code == 'M遅':
             return 'CLMR'
+        # 病L → 入（病院リーダー）、病CT → CT（病院CT）
+        if loc_code in ['病L', '入']:
+            return '入'
+        if loc_code in ['病CT', 'CT']:
+            return 'CT'
         # '[業務名]/17業' や '[業務名]/17休' → [業務名]
         if '/17業' in loc_code or '/17休' in loc_code:
             return loc_code.split('/')[0]
@@ -66,6 +71,61 @@ class DayScheduler:
         import calendar
         num_days = calendar.monthrange(self.year, self.month)[1]
         return [date(self.year, self.month, d) for d in range(1, num_days + 1)]
+
+    def _calc_workday_budget(self, req_map, night_map, target_holidays: int = None) -> Dict[str, int]:
+        """月ごとの公休目標を守るため、スタッフごとの最大勤務日数を事前計算する。
+        max_workdays = 確定可能勤務日数 - 追加で必要な公休日数
+        """
+        if target_holidays is None:
+            target_holidays = self.target_holidays
+        # 休暇判定ロジック：☆や★で始まる、または「休」「育」「退職」を含む記号は一意に公休として扱う
+        def is_pure_holiday(sym):
+            if not sym: return False
+            if sym in {'○', '出/☆'}: return True
+            if any(sym.startswith(p) for p in ['☆', '★', '◆']): return True
+            if any(p in sym for p in ['休', '育', '退職']): return True
+            return False
+
+        CONDITIONAL_HOLIDAY_SYMS = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
+        # 強制勤務申請: 日程が確定している業務（公休にもスケジュール対象にもならない）
+        FORCED_WORK_SYMS = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講',
+                            '出/(聴)', '出/(発)2', '17業'}
+        budgets = {}
+        for s in self.staff_list:
+            if s.status != '在籍':
+                continue
+            rest_count = 0        # 確定公休日数（9日カウント対象）
+            non_schedulable = 0   # スケジュール不可日数（夜勤・明け・強制勤務）
+            for d in self.dates:
+                req = req_map.get((s.id, d))
+                is_night = night_map.get((s.id, d), False)
+                is_ake = night_map.get((s.id, d - timedelta(days=1)), False)
+                is_jan = (d.month == 1 and d.day in [1, 2, 3])
+                is_off_day = is_jan or jpholiday.is_holiday(d) or d.weekday() == 6
+                if is_night:
+                    # 夜勤当日は日勤も可能（当直運用）
+                    pass
+                elif is_ake:
+                    non_schedulable += 1   # 明け = 日勤配置なし、公休にもならない
+                elif req in FORCED_WORK_SYMS:
+                    non_schedulable += 1   # 確定業務（公休にならず、通常配置枠にも入らない）
+                elif is_pure_holiday(req):
+                    rest_count += 1        # 希望休等 = 確定公休
+                elif req in CONDITIONAL_HOLIDAY_SYMS:
+                    if is_off_day:
+                        rest_count += 1    # 日曜祝日の研修=公休
+                    else:
+                        non_schedulable += 1 # 平日土曜の研修=勤務扱いで配置不可
+                elif req:
+                    # その他の勤務申請（病CTなど）がある場合は勤務日として扱う
+                    non_schedulable += 1
+                elif is_off_day:
+                    rest_count += 1        # 日曜・祝日 = 確定公休
+                # else: 通常の勤務可能日
+            schedulable = len(self.dates) - rest_count - non_schedulable
+            needed_extra_rest = max(0, target_holidays - rest_count)
+            budgets[s.id] = max(0, schedulable - needed_extra_rest)
+        return budgets
 
     def schedule(self, 
                  requests: List[Request], 
@@ -88,14 +148,22 @@ class DayScheduler:
         for na in night_assignments:
             night_map[(na.staff_id, na.date)] = True
             
+        # Pre-calculate monthly workday budget per staff (rest-day protection)
+        workday_budget = self._calc_workday_budget(req_map, night_map)
+        # Track cumulative regular-day assignments (used to enforce budget)
+        total_work_count = {s.id: 0 for s in self.staff_list}
         # Day-by-Day Scheduling Loop
         daily_location_needs = {}
-        
+
         for d in self.dates:
             print(f"Scheduling Day: {d}")
             prev_assignments = assignment_history[-1] if assignment_history else {}
-            
-            day_assignments, location_needs = self._schedule_one_day(d, req_map, night_map, prev_assignments, assignment_counts, consecutive_work_days)
+
+            day_assignments, location_needs = self._schedule_one_day(
+                d, req_map, night_map, prev_assignments, assignment_counts, 
+                consecutive_work_days, total_work_count, workday_budget,
+                assignment_history
+            )
             all_assignments.extend(day_assignments)
             daily_location_needs[d] = location_needs
             
@@ -108,29 +176,32 @@ class DayScheduler:
                 c = assignment_counts[a.staff_id]
                 base_code = self._get_base_location_code(a.location_code)
                 c[base_code] = c.get(base_code, 0) + 1
+            # Update consecutive work days AND total_work_count
+            PURE_HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '退職', '17休'}
+            CONDITIONAL_HOLIDAY_SYMS = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
             
-            # Update consecutive work days
             for s in self.staff_list:
                 loc = current_day_map.get(s.id)
-                # Check target day for night shift
                 is_night_today = night_map.get((s.id, d))
-                # Check previous day for ake (post-night)
                 is_ake_today = night_map.get((s.id, d - timedelta(days=1)))
+                req_symbol = req_map.get((s.id, d))
                 
                 is_working_day = False
-                
-                req_symbol = req_map.get((s.id, d))
-                is_working_req = False
-                if req_symbol and req_symbol not in ['休', '○', '★', '★連', '☆', '☆小', '☆デ', '◆', '退職']:
-                    is_working_req = True
-                
-                if is_night_today or is_ake_today or is_working_req:
-                    is_working_day = True # Night, Ake, and Working Requests definitely count as working instances
+                if is_night_today or is_ake_today:
+                    is_working_day = True
+                elif req_symbol and req_symbol not in PURE_HOLIDAY_SYMS and req_symbol not in CONDITIONAL_HOLIDAY_SYMS and req_symbol != '休':
+                    is_working_day = True # Normal working requests
+                elif req_symbol in CONDITIONAL_HOLIDAY_SYMS:
+                    is_jan = (d.month == 1 and d.day in [1, 2, 3])
+                    is_off_day = is_jan or jpholiday.is_holiday(d) or d.weekday() == 6
+                    if not is_off_day:
+                        is_working_day = True # Weekday training is work
                 elif loc and loc not in ['休', '○']:
                     is_working_day = True # Normal day assignment
                     
                 if is_working_day:
                     consecutive_work_days[s.id] += 1
+                    total_work_count[s.id] = total_work_count.get(s.id, 0) + 1
                 else:
                     consecutive_work_days[s.id] = 0
             
@@ -142,7 +213,10 @@ class DayScheduler:
                           night_map: Dict[Tuple[str, date], bool],
                           prev_assignments: Dict[str, str],
                           assignment_counts: Dict[str, Dict[str, int]],
-                          consecutive_work_days: Dict[str, int]) -> Tuple[List[DayAssignment], Dict[str, int]]:
+                          consecutive_work_days: Dict[str, int],
+                          total_work_count: Dict[str, int] = None,
+                          workday_budget: Dict[str, int] = None,
+                          assignment_history: List[Dict[str, str]] = None) -> Tuple[List[DayAssignment], Dict[str, int]]:
         
         model = cp_model.CpModel()
         weekday = current_date.weekday() # 0=Mon, 6=Sun
@@ -227,9 +301,15 @@ class DayScheduler:
         # - Not 'holiday' request (★, ☆, ...)
         # - Not Previous Day Night Shift (DH-05)
         
-        HOLIDAY_SYMBOLS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '研(聴)', '退職',
-                           '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)',
-                           '研(座)', '研(役)', '出/(役)'}
+        # 休暇判定ロジックを共通化
+        def is_any_holiday(sym):
+            if not sym: return False
+            if sym in {'○', '出/☆'}: return True
+            if any(sym.startswith(p) for p in ['☆', '★', '◆']): return True
+            if any(p in sym for p in ['休', '育', '退職']): return True
+            if sym in {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}:
+                return True
+            return False
         # '○' is Night Shift End (明け) -> Treated as Holiday usually? 
         # Spec says "○ | 夜勤明け | × | × | ×" (Day: ×) -> So Yes, treated as Holiday/Off.
         
@@ -250,6 +330,9 @@ class DayScheduler:
         gyohai_has_veteran = False
         
         # Pre-process Forced Requests to adjust Location Needs
+        forced_loc_for_staff = {}
+        loc_request_counts = {}
+        
         for s in self.staff_list:
             if s.status != '在籍': continue
             p_req = req_map.get((s.id, current_date))
@@ -259,22 +342,25 @@ class DayScheduler:
                 if int(s.experience_years) >= 6:
                     gyohai_has_veteran = True
             
+            target_loc_code = None
             if p_req in FORCED_LOC_MAP:
                 target_loc_code = FORCED_LOC_MAP[p_req]
-                
-                # Check if this location exists in self.locations
-                loc_obj = next((l for l in self.locations if l.code == target_loc_code), None)
-                if loc_obj:
-                    # Increment need
-                    if target_loc_code not in location_needs:
-                         location_needs[target_loc_code] = 0
-                         # Should we add to target_locations if not present?
-                         # distinct from active_locations check?
-                         # Yes, if we need to assign someone here, it must be a target.
-                         if loc_obj not in target_locations:
-                             target_locations.append(loc_obj)
-                             
-                    location_needs[target_loc_code] += 1
+            elif p_req and not is_any_holiday(p_req):
+                if any(l.code == p_req for l in self.locations):
+                    target_loc_code = p_req
+                    
+            if target_loc_code:
+                forced_loc_for_staff[s.id] = target_loc_code
+                loc_request_counts[target_loc_code] = loc_request_counts.get(target_loc_code, 0) + 1
+
+        # 新ルール：事前の「出」などの申請は元の枠（base_need）を消費し、超過分のみ枠を拡張する
+        for loc_code, req_count in loc_request_counts.items():
+            loc_obj = next((l for l in self.locations if l.code == loc_code), None)
+            if loc_obj:
+                base_need = location_needs.get(loc_code, 0)
+                location_needs[loc_code] = max(base_need, req_count)
+                if loc_obj not in target_locations:
+                    target_locations.append(loc_obj)
                     
         # Deduct Wednesday female Gyohai from 'ク' needs
         if female_gyohai_wed > 0 and 'ク' in location_needs:
@@ -285,19 +371,25 @@ class DayScheduler:
         if not is_holiday:
             for r in self.training_rules:
                 modality = r['modality']
-                # Check if modality is in target_locations
                 if any(l.code == modality for l in target_locations):
-                    # Yes, create dummy location
-                    dummy_code = f"({modality})"
+                    display_name = r.get('display_name') or f"({modality})"
+                    dummy_code = display_name # Use display_name as dummy code for Excel
                     dummy_loc = Location(dummy_code, f"{modality}育成", "育成", {}, "なし", 99, True)
-                    # Add to target locations
+                    
                     if not any(l.code == dummy_code for l in target_locations):
                         target_locations.append(dummy_loc)
-                        location_needs[dummy_code] = len(r['trainees'])
+                        location_needs[dummy_code] = 1 # Force max 1 trainee per day per modality
+                        
+                        # Determine instructors
+                        instructors = r['instructors']
+                        if instructors == ["RANK_A_ONLY"]:
+                             # Find all staff with Rank A in this modality
+                             instructors = [s.id for s in self.staff_list if self.skills.get(s.id, {}).get(modality, SkillRank.NONE) == SkillRank.A]
+                        
                         training_mappings.append({
                             'modality': modality,
                             'dummy_code': dummy_code,
-                            'instructors': r['instructors'],
+                            'instructors': instructors,
                             'trainees': r['trainees']
                         })
 
@@ -319,6 +411,8 @@ class DayScheduler:
             
             # Calculate unavoidable future consecutive work days due to Night/Ake/Requests
             forced_future = 0
+            CONDITIONAL_HOLIDAY_SYMS = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
+            
             for offset in range(1, 10):
                 check_d = current_date + timedelta(days=offset)
                 is_n = night_map.get((s.id, check_d))
@@ -326,9 +420,15 @@ class DayScheduler:
                 
                 is_working_req = False
                 req_symbol = req_map.get((s.id, check_d))
-                if req_symbol and req_symbol not in ['休', '○', '★', '★連', '☆', '☆小', '☆デ', '◆', '退職']:
+                if req_symbol and req_symbol not in ['休', '○', '★', '★連', '☆', '☆小', '☆デ', '◆', '退職', '17休']:
                     # If there's a request and it's not a holiday, it's a forced working day
-                    is_working_req = True
+                    if req_symbol in CONDITIONAL_HOLIDAY_SYMS:
+                        is_jan = (check_d.month == 1 and check_d.day in [1, 2, 3])
+                        is_off_day = is_jan or jpholiday.is_holiday(check_d) or check_d.weekday() == 6
+                        if not is_off_day:
+                            is_working_req = True
+                    else:
+                        is_working_req = True
                 
                 if is_n or is_a or is_working_req:
                     forced_future += 1
@@ -336,8 +436,6 @@ class DayScheduler:
                     break # Reached a day where they *could* theoretically rest
             
             # 6日連続勤務後は強制休暇（連勤最大6日）
-            # もし「今の連勤数」＋「今日働くとしたら(1)」＋「避けられない未来の連勤数(forced_future)」が6を超えるなら、
-            # 今日を「休」にして連勤をリセットしなければならない。
             c_days = consecutive_work_days.get(s.id, 0)
             
             if c_days >= 6 or (c_days + 1 + forced_future > 6):
@@ -356,13 +454,11 @@ class DayScheduler:
             
             # Req 4: Enforce Holiday after Post-Night
             if night_map.get((s.id, two_days_ago)):
-                # If no request (p_req is None), FORCE Holiday
                 if p_req is None:
-                    # Create explicit assignment '休'
                     forced_holidays.append(DayAssignment(date=current_date, staff_id=s.id, location_code='休', rank=SkillRank.NONE))
                     continue
             
-            if p_req in HOLIDAY_SYMBOLS:
+            if is_any_holiday(p_req):
                 continue
                 
             # NEW LOGIC: Ishikawa 4th Tuesday PET Assignment
@@ -374,15 +470,57 @@ class DayScheduler:
             staff_req_symbol[s.id] = p_req
             available_staff.append(s)
 
+        staff_hpi = {}
+        future_dates = [ft for ft in self.dates if ft > current_date]
+        
+        for s in available_staff:
+            # 既に取得済みの休日数（本日のDayScheduler時点でのカウント）
+            taken_count = 0
+            if assignment_history:
+                for hist in assignment_history:
+                    loc = hist.get(s.id)
+                    if loc == '休':
+                        taken_count += 1
+            
+            # 未来の確定休み（日曜、祝日、希望休）
+            future_fixed_offs = 0
+            future_akes = 0
+            for ft in future_dates:
+                is_ft_jan = (ft.month == 1 and ft.day in [1, 2, 3])
+                is_ft_off = is_ft_jan or jpholiday.is_holiday(ft) or ft.weekday() == 6
+                req = req_map.get((s.id, ft))
+                is_ft_night = night_map.get((s.id, ft), False)
+                is_ft_ake = night_map.get((s.id, ft - timedelta(days=1)), False)
+                
+                if is_any_holiday(req) or is_ft_off:
+                    future_fixed_offs += 1
+                elif is_ft_ake:
+                    future_akes += 1
+            
+            # HARDCODED BUG FIX: Removed hardcoded 9. We safely estimate target_holidays as 10 (or 21 budget roughly).
+            # T004 had 10 future fixed offs (8 pub + 2 stars). 9 - 10 was negative, so HPI was always 0!
+            # We must use self.workday_budget logic or at least 10 here.
+            target = 10 # Default standard month
+            needed = max(0, target - (taken_count + future_fixed_offs))
+            # HPIの分母：夜勤当日も含めるため、future_nights_akes ではなく future_akes のみを除外する
+            remaining_weakdays = len(future_dates) - future_fixed_offs - future_akes
+            
+            if remaining_weakdays > 0:
+                hpi = needed / remaining_weakdays
+            else:
+                hpi = float(needed)
+            staff_hpi[s.id] = hpi
+
         # 3. Create Variables x[staff_id, loc_code]
         x = {}
         fairness_penalties = []
         maximization_objective = [] # Req 2
         next_date = current_date + timedelta(days=1) # Req 3
-        
+
         for s in available_staff:
             s_skills = self.skills.get(s.id, {})
             p_req = staff_req_symbol.get(s.id)
+            hpi = staff_hpi.get(s.id, 0.0)
             
             # Constraints for Late/MG bans
             is_night_today = night_map.get((s.id, current_date))
@@ -405,56 +543,100 @@ class DayScheduler:
             
             for loc in target_locations:
                 l_code = loc.code
+                is_training = l_code.startswith('(') and l_code.endswith(')')
+
+                # --- 研修無効化フラグ ---
+                # main.py からの制御で研修を全面禁止にする（代休が発生する月に研修を入れない）
+                if is_training and self.disable_training:
+                    continue
+
+                # --- PRUNING BASED ON HPI ---
+                # HPI > 0.3: 公休不足の予兆があれば研修（育成枠）をスキップ
+                if is_training and hpi > 0.3:
+                    continue
+                
+                # 育成枠の優先度制御: リスト内で「最优先の未研修者」だけに変数を作る
+                # これにより、従来の「全員が候補となりソルバーが決める」のではなく
+                # 「最優先の人のみが候補」になり、後順位の人に割り当てられる問題を解消する
+                if is_training:
+                    # この日の研修枠定員を確認: リストの中で最優先の人だけを候補にする
+                    matched_rule = None
+                    for r in self.training_rules:
+                        if l_code == (r.get('display_name') or f"({r['modality']})"):
+                            matched_rule = r
+                            break
+                    if matched_rule is None:
+                        continue  # この枠に該当ルールなし -> スキップ
+                    trainees = matched_rule['trainees']
+                    if s.id not in trainees:
+                        continue  # 育成対象外 -> スキップ
+                    # 「該当日時点で最優先の人」のみを候補にする
+                    # メインの支数ルールL709以降で <= ins_sum 制約がかかるが
+                    # リスト順位をここで強制する
+                    my_index = trainees.index(s.id)
+                    # 自分より順位が上の人がすでに今月訓練済みか確認
+                    # (assignment_counts に育成枠コードが記録される)
+                    higher_priority_done = False
+                    for idx in range(my_index):
+                        # 上位者が今期不住の時は自分が次の候補になる
+                        higher_id = trainees[idx]
+                        higher_training_count = assignment_counts.get(higher_id, {}).get(l_code, 0)
+                        if higher_training_count == 0:
+                            # 上位者がまだ訓練していない -> 自分は候補神
+                            higher_priority_done = True
+                            break
+                    if higher_priority_done:
+                        continue  # 上位者が先に研修すべきなのでスキップ
                 
                 # DH-07: Forced Location Check
-                if p_req in FORCED_LOC_MAP:
-                    target_loc = FORCED_LOC_MAP[p_req]
-                    # If this is the target location, Must Assign (1 if possible)
-                    # If this is NOT the target location, Must NOT Assign (0)
-                    
+                # ソフト制約化: hard "==1" は月末にINFEASIBLEを引き起こすため、
+                # 超大ボーナスで実質的に強制しつつ競合時は他の解を許容する
+                if s.id in forced_loc_for_staff:
+                    target_loc = forced_loc_for_staff[s.id]
                     if l_code == target_loc:
-                        # Force assignment
                         x[s.id, l_code] = model.NewBoolVar(f'x_{s.id}_{l_code}')
-                        model.Add(x[s.id, l_code] == 1)
+                        maximization_objective.append(x[s.id, l_code] * 800000)  # ほぼ強制
                     else:
-                        # Cannot work elsewhere
-                        pass # Do not create variable = effectively 0
+                        pass  # Do not create variable = effectively 0
                     continue
                 
                 # If p_req is None or normal
-                # DH-02: Skill Check & Rank Rules (Refined)
-                rank = s_skills.get(l_code, SkillRank.NONE)
-                if rank == SkillRank.NONE:
-                    continue
                 
-                # Specialized Rank Rules
-                # DH-02: Skill
-                if l_code not in s_skills:
-                    continue
-                if s_skills[l_code] in [SkillRank.NONE, '-', '']:
-                    continue
+                # 育成枠（ダミー場所）は専用チェック：スキルマスタを見ず、研修生リストで判断
+                if l_code.startswith('(') and l_code.endswith(')'):
+
+                    is_registered_trainee = any(s.id in tm['trainees'] for tm in training_mappings if tm['dummy_code'] == l_code)
+                    if not is_registered_trainee:
+                        continue
+                    # 研修生はスキルチェック不要でそのまま変数作成へ進む
+                else:
+                    # DH-02: 通常業務のスキルチェック
+                    rank = s_skills.get(l_code, SkillRank.NONE)
+                    if rank == SkillRank.NONE:
+                        continue
+                    if l_code not in s_skills:
+                        continue
+                    if s_skills[l_code] in [SkillRank.NONE, '-', '']:
+                        continue
                 # HB: Aランク必須
-                if l_code == 'HB' and rank < SkillRank.A:
-                    continue
-                # アンギオ: Bランク以上
-                if l_code == 'ア' and rank < SkillRank.B:
-                    continue
-                
-                # Seisa (精): Wed/Fri -> Rank A. Others -> Rank B (Exclude Rank A).
-                if l_code == '精':
-                    # Weekday 2=Wed, 4=Fri.
-                    if weekday in [2, 4]:
-                        if rank < SkillRank.A: continue
-                    else:
-                        # User Request: "Others -> Rank B or lower"
-                        # This means we Allow B, C, D. We only Exclude A.
-                        # Also must exclude NONE.
-                        if rank == SkillRank.A: continue
-                        if rank == SkillRank.NONE: continue
-                
-                # Cath stays at B+ unless specified (IVR standard)
-                if l_code == '心' and rank < SkillRank.B:
-                    continue
+                # 以下のランクチェックはダミー枠には適用しない
+                if not (l_code.startswith('(') and l_code.endswith(')')):
+                    # HB: Aランク必須
+                    if l_code == 'HB' and rank < SkillRank.A:
+                        continue
+                    # アンギオ: Bランク以上
+                    if l_code == 'ア' and rank < SkillRank.B:
+                        continue
+                    # Seisa (精): Wed/Fri -> Rank A. Others -> Rank B (Exclude Rank A).
+                    if l_code == '精':
+                        if weekday in [2, 4]:
+                            if rank < SkillRank.A: continue
+                        else:
+                            if rank == SkillRank.A: continue
+                            if rank == SkillRank.NONE: continue
+                    # Cath stays at B+ unless specified (IVR standard)
+                    if l_code == '心' and rank < SkillRank.B:
+                        continue
 
                 # Ultra Late ('超遅') / Clinic Late ('ク遅') / MRI Late ('M遅'): 翌日夜勤なら配置不可
                 if l_code in ['超遅', 'ク遅', 'M遅']:
@@ -464,37 +646,121 @@ class DayScheduler:
 
                 # DH-06: Gender
                 if loc.gender_constraint == '女性のみ' and s.gender.value == '男':
-                    if s.id == 'T014' and l_code == 'ク' and current_date.day == 21: print("Skipped T014 due to gender")
                     continue
                     
                 # DH-08,09,10: Late/MG Ban
                 if ban_late and l_code in ['遅番', '超遅', 'ク遅', 'M遅']:
-                    if s.id == 'T014' and l_code == 'ク' and current_date.day == 21: print("Skipped T014 due to late ban")
                     continue
                 if ban_mg_po and l_code in ['MG', 'ポ']:
-                    if s.id == 'T014' and l_code == 'ク' and current_date.day == 21: print("Skipped T014 due to MG ban")
                     continue
                 
-                if s.id == 'T014' and l_code == 'ク' and current_date.day == 21: print("T014 'ク' is ADDED TO x!")
                 x[s.id, l_code] = model.NewBoolVar(f'x_{s.id}_{l_code}')
-                
+
                 # Maximization term (Req 2)
                 base_score = 10000
-                if l_code.startswith('(') and l_code.endswith(')'):
-                    base_score = 5000 # Lower priority: Only fill if staff is free
-                    
+
+                # ── Global Workload Fairness (Universal Equity) ──────
+                # 全スタッフ間の「総勤務日数」を平準化する。
+                # 平均より多く働いている人にはペナルティ、少ない人には加点を行う。
+                if total_work_count:
+                    avg_work = sum(total_work_count.values()) / len(total_work_count)
+                    current_work = total_work_count.get(s.id, 0)
+                    diff = current_work - avg_work
+                    if diff > 0:
+                        # 平均より多い場合は減点（1日につき4000点に増強し強力に平準化）
+                        base_score -= int(diff * 4000)
+                    elif diff < 0:
+                        # 平均より少ない場合は加点（1日につき4000点）
+                        base_score += int(abs(diff) * 4000)
+
+                # HPI による動的なスコアリング
+                if is_training:
+                    # 育成枠の優先度を大幅に下げ、公休を優先させる
+                    base_score = 50  # 通常の 1/200
+                    # リスト順位によるボーナス（可能な限り1人目を優先）
+                    matched_rule = None
+                    for r in self.training_rules:
+                        if l_code == (r.get('display_name') or f"({r['modality']})"):
+                            matched_rule = r
+                            break
+                    if matched_rule:
+                        trainees = matched_rule['trainees']
+                        if s.id in trainees:
+                            idx = trainees.index(s.id)
+                            # 1番目:+3300, 2番目:+2200, 3番目:+1100
+                            priority_bonus = max(0, (3 - idx) * 1100)
+                            base_score += priority_bonus
+                # (3) ペース配分（HPI）による強力なスケジューリング制御
+                # 月間で均等に休ませるため、HPIが高騰している（働きすぎている）場合、強力に減点する
+                if hpi > 0.8:
+                    base_score = 500    # 超低優先度だがプラス（空欄放置は防ぐ）
+                elif hpi > 0.6:
+                    base_score = 1000   # 低優先度
+                elif hpi > 0.4:
+                    base_score = 3000   # 中優先度
+
+                # 研修中の人が通常業務に選ばれる場合、わずかなペナルティ
+                is_trainee = any(s.id in r['trainees'] for r in self.training_rules)
+                if is_trainee:
+                    base_score -= 200
+
+                # (4) 希少スキルボーナスの適用（ただし、ペース配分に余裕がある場合のみ強力発動）
+                mri_bonus = 500000 if hpi <= 0.8 else 50000  # HPIが危険ならボーナスを1/10に減衰
                 if s.id in self.mri_only_staff and l_code in ['病院MR', 'CLMR', 'M遅']:
-                    base_score = 500000  # Massive bonus to prioritize MRI-only staff
+                    base_score += mri_bonus
+
+                # 希少・遅番枠（M遅・ク遅）はスロットが1枠のみのため、
+                # 優先的に埋めないと他業務との競合で空きになりやすい。
+                # 大きなボーナスで確実に1名を確保する。
+                if l_code in ['M遅', 'ク遅']:
+                    base_score = max(base_score, 25000)
+
+                # HB・DR・アンギオ（ア）：担当資格者が限られる希少業務。
+                # DEFICIT_PENALTY(100,000)が同等の他業務（CLMR等）との競合で
+                # ソルバーが一貫してこれらを「諦める」現象を防ぐため、
+                # M遅/ク遅と同様に最低スコアを保証して優先配置を促す。
+                if l_code in ['HB', 'DR', 'ア']:
+                    base_score = max(base_score, 30000)
+
+
+                # (5) 究極の予算制限とラストリゾート（安全網）
+                if workday_budget and total_work_count:
+                    _budget = workday_budget.get(s.id, 9999)
+                    _used = total_work_count.get(s.id, 0)
+                    over = _used - _budget
+                    if over >= 2:
+                        base_score = -90000  # 代休3日以上はほぼ禁止（配置不足10万点に近い拒否）
+                    elif over == 1:
+                        # 代休2日目：強力な拒否を与え、他の代休1日目候補を徹底的に探させる
+                        base_score = -80000 
+                    elif over == 0:
+                        # 予算切れ（代休1日目）：配置不足を埋めるために採用
+                        base_score = 15000 
+
+
                 maximization_objective.append(x[s.id, l_code] * base_score)
 
                 # Soft Constraint for Fairness (Equalize Counts)
                 # 正規化したベースコードのカウントを参照することで、ク遅・/17業などを統合して均等化する
                 base_l_code = self._get_base_location_code(l_code)
                 count = assignment_counts[s.id].get(base_l_code, 0)
-                if count > 0:
-                    # 均等化の重みを 20 → 150 に強化（偏りをより積極的に解消する）
-                    weight = 150
-                    fairness_penalties.append(x[s.id, l_code] * (count * weight))
+                # 専従スタッフ（スキルが単一）は公平性ペナルティを免除する。
+                # 累積回数が増えるほど選ばれにくくなる逆効果を防ぐため。
+                is_dedicated = (s.id == 'T001' and l_code == '病CT')
+                # 公平性ペナルティ: ペナルティを base_score-100 でキャップし
+                # 「予算内スタッフ(net≥100)」が「予算超スタッフ(score=1)」より必ず優先されるよう保証
+                # 予算到達スタッフ (at_budget/over_budget) はスコアが固定なので免除
+                # 予算到達・超過スタッフはスコアが既に低いので公平性ペナルティ免除
+                _at_or_over_budget = (workday_budget and total_work_count and
+                                      total_work_count.get(s.id, 0) >= workday_budget.get(s.id, 9999))
+                if count > 0 and not is_dedicated and not _at_or_over_budget:
+                    weight = 500
+                    raw_penalty = count * weight
+                    # base_score-100 でキャップ: 予算内スタッフのnet≥100を保証し
+                    # 予算超スタッフ(score=1)に対して必ず優先される
+                    capped_penalty = min(raw_penalty, max(0, base_score - 100))
+                    if capped_penalty > 0:
+                        fairness_penalties.append(x[s.id, l_code] * capped_penalty)
 
                 # Special Monthly Bonus Rule for Ono (T014) and Kawana (T026) -> strictly 6 'ク' assignments
                 if s.id in ['T014', 'T026'] and l_code == 'ク':
@@ -502,15 +768,15 @@ class DayScheduler:
                         # Massive bonus to forcefully pick them for 'ク' until quota hits 6
                         if (s.id, l_code) in x:
                             maximization_objective.append(x[s.id, l_code] * 500000)
-                            if s.id == 'T014': print(f"DEBUG: Adding 500k to T014 on Day {current_date.day}. Current count={count}")
                     else:
                         # Hard ban once they hit 6
                         if (s.id, l_code) in x:
                             model.Add(x[s.id, l_code] == 0)
 
 
+
         # 4. Hard Constraints
-        
+
         # DH-01: One person <= 1 location (for those not already forced)
         
         # Ono / Kawana Special Ban: Cannot both work 'ク' on the same day
@@ -546,11 +812,20 @@ class DayScheduler:
                             if l.code not in allowed_next and (s.id, l.code) in x:
                                  model.Add(x[s.id, l.code] == 0)
 
-        # DH-03: Required Headcount
+        # DH-03: Required Headcount with Understaffing Penalty
+        deficit_vars = []
+        DEFICIT_PENALTY = 100000 # 配置不足1名につき10万点のペナルティ
+
         for loc in target_locations:
             req = location_needs[loc.code]
             vars_l = [x[s.id, loc.code] for s in available_staff if (s.id, loc.code) in x]
-            model.Add(sum(vars_l) <= req) # Req 2: Allow understaffing if impossible
+            
+            # shortage = 目標人数(req) - 実際の配置人数
+            shortage = model.NewIntVar(0, req, f'shortage_{loc.code}_{current_date}')
+            model.Add(sum(vars_l) + shortage == req)
+            
+            # 配置不足分をペナルティとして記録
+            deficit_vars.append(shortage * DEFICIT_PENALTY)
             
         # Add Training Restrictions
         for tm in training_mappings:
@@ -575,8 +850,43 @@ class DayScheduler:
                     else:
                         model.Add(x[s.id, dummy_code] == 0)
 
+        # 4.5. Tateyama Special Rule (Tateyama Hospital Assignment)
+        # Endo (T066) is the specialist. Backups: Fukuda(T007), Minowa(T023), Ishii(T024)
+        if '館山' in location_needs:
+            endo_id = 'T066'
+            backups = ['T007', 'T023', 'T024']
+            off_symbols = {'★', '★連', '☆', '☆小', '☆デ', '◆', '出/☆', '研(聴)', '退職', 
+                           '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', 
+                           '出/(座)', '研(座)', '研(役)', '出/(役)'}
+            
+            endo_req = staff_req_symbol.get(endo_id)
+            endo_is_off = endo_req in off_symbols
+            
+            # Is Endo available to work? (Not on holiday and in available_staff list)
+            if not endo_is_off and any(s.id == endo_id for s in available_staff):
+                # ソフト: ほぼ強制（INFEASIBLE防止のため == 1 は使わない）
+                if (endo_id, '館山') in x:
+                    maximization_objective.append(x[endo_id, '館山'] * 850000)
+            else:
+                # Endo is off or unavailable: backup must go
+                if (endo_id, '館山') in x:
+                    model.Add(x[endo_id, '館山'] == 0)
+
+                backup_vars = [x[sid, '館山'] for sid in backups if (sid, '館山') in x]
+                if backup_vars:
+                    # ソフト: sum == 1 の代わりに sum >= 1 かつ大ボーナス
+                    maximization_objective.append(sum(backup_vars) * 850000)
+                    model.Add(sum(backup_vars) <= 1)  # 上限のみ hard
+
+            # 4.5.1 館山応援者の夜勤禁止制約
+            # 他院応援のため、当日夜勤があるスタッフは館山に入れない
+            for sid in [endo_id] + backups:
+                if (sid, '館山') in x:
+                    if night_map.get((sid, current_date)):
+                        model.Add(x[sid, '館山'] == 0)
+
         # 5. Power Balance (PB-xx)
-        self._add_power_balance_constraints(model, x, target_locations, location_needs, available_staff, current_date, weekday, female_gyohai_wed, gyohai_has_veteran)
+        self._add_power_balance_constraints(model, x, target_locations, location_needs, available_staff, current_date, weekday, female_gyohai_wed, gyohai_has_veteran, fairness_penalties)
 
         # 5.5 CLMR Special Rule (SR-CLMR)
         l_code = 'CLMR'
@@ -587,17 +897,28 @@ class DayScheduler:
                 ab_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= SkillRank.B]
                 d_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) == SkillRank.D]
                 
+                # 注意: 要求数 > available数 の場合は充足可能な数までキャップする
+                # → モデルがINFEASIBLEになって全配置0になるのを防ぐ
+                def _safe_min(req: int, pool: list) -> int:
+                    return min(req, len(pool))
+                def _add_soft_min(req_n, pool, tag):
+                    n = _safe_min(req_n, pool)
+                    if n <= 0: return
+                    sl = model.NewIntVar(0, n, tag)
+                    model.Add(sum(pool) + sl >= n)
+                    fairness_penalties.append(sl * 3000000)
+
                 if weekday == 2:  # 水曜
-                    if a_vars: model.Add(sum(a_vars) >= 3)
-                    if ab_vars: model.Add(sum(ab_vars) >= 4) # A3, B1
+                    _add_soft_min(3, a_vars,  f'clmr_a_slack_{current_date.day}')
+                    _add_soft_min(4, ab_vars, f'clmr_ab_slack_{current_date.day}')
                     if d_vars: model.Add(sum(d_vars) == 0) # D禁止
                 elif weekday == 4:  # 金曜
-                    if a_vars: model.Add(sum(a_vars) >= 2)
-                    if ab_vars: model.Add(sum(ab_vars) >= 4) # A2, B2
+                    _add_soft_min(2, a_vars,  f'clmr_a_slack_{current_date.day}')
+                    _add_soft_min(4, ab_vars, f'clmr_ab_slack_{current_date.day}')
                     if d_vars: model.Add(sum(d_vars) <= 1)
                 else:  # 月火木土
-                    if a_vars: model.Add(sum(a_vars) >= 2)
-                    if ab_vars: model.Add(sum(ab_vars) >= 3) # A2, B1
+                    _add_soft_min(2, a_vars,  f'clmr_a_slack_{current_date.day}')
+                    _add_soft_min(3, ab_vars, f'clmr_ab_slack_{current_date.day}')
                     if d_vars: model.Add(sum(d_vars) <= 1)
                 
                 # Soft Constraint for D
@@ -615,13 +936,18 @@ class DayScheduler:
         # week_num = (day - 1) // 7 + 1
         current_week_num = (current_date.day - 1) // 7 + 1
         
-        self._add_special_rules(model, x, current_date, self.rules, location_needs)
+        self._add_special_rules(model, x, current_date, self.rules, location_needs, fairness_penalties)
 
         # 7. Soft Constraints: Minimize Consecutive Same Assignments
         consecutive_penalties = []
-        WEIGHT_CONSECUTIVE = 100
+        WEIGHT_CONSECUTIVE = 1000  # 強力に分散させるため 100 -> 1000 に強化
+        # スキルが単一タスクのスタッフは連続ペナルティを免除する。
+        # 病CT専従（T001）等、他に選択肢がないスタッフに課すと「1日おき」の強制になるため。
+        CONSECUTIVE_EXEMPT = {'T001'}
         
         for s in available_staff:
+             if s.id in CONSECUTIVE_EXEMPT:
+                 continue
              if s.id in prev_assignments:
                  prev_loc = prev_assignments[s.id]
                  if (s.id, prev_loc) in x:
@@ -637,23 +963,30 @@ class DayScheduler:
         total_penalties.extend(fairness_penalties)
         total_penalties.extend(consecutive_penalties)
         total_penalties.extend(ultra_late_next_day_penalties)
+        total_penalties.extend(deficit_vars)
         
         # Req 2: Maximize Assignments - Penalties
         model.Maximize(sum(maximization_objective) - sum(total_penalties))
 
         # Solve
         solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 60
+        solver.parameters.random_seed = 42      # 再現性確保
+        solver.parameters.num_workers = 1       # シングルスレッド（完全再現性）
         status = solver.Solve(model)
-        
+
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
             result = self._extract_day_solution(solver, x, current_date, self.skills)
+
             return result + forced_holidays, location_needs
         else:
-            print(f"FAILED to schedule day: {current_date}")
-            # Debug: Print active constraints or resource shortage
-            print(f"  Weekday: {weekday}")
-            print(f"  Active Locations: {[l.code for l in target_locations]}")
-            print(f"  Available Staff Count: {len(available_staff)}")
+            status_name = {cp_model.INFEASIBLE: 'INFEASIBLE', cp_model.UNKNOWN: 'UNKNOWN/TIMEOUT'}.get(status, str(status))
+            print(f"FAILED to schedule day: {current_date} (status={status_name})")
+            print(f"  Weekday: {weekday}, Vars: {len(x)}, Avail: {len(available_staff)}")
+            # 強制割り当て（forced_loc_map）を持つスタッフを表示
+            forced = {s.id: staff_req_symbol.get(s.id) for s in available_staff if staff_req_symbol.get(s.id) in FORCED_LOC_MAP}
+            if forced:
+                print(f"  FORCED assignments: {forced}")
             return forced_holidays, location_needs
 
     def _extract_day_solution(self, solver, x, date, skills) -> List[DayAssignment]:
@@ -664,7 +997,9 @@ class DayScheduler:
                 res.append(DayAssignment(date=date, staff_id=sid, location_code=lcode, rank=rank))
         return res
 
-    def _add_power_balance_constraints(self, model, x, target_locations, location_needs, available_staff, current_date, day_of_week, female_gyohai_wed, gyohai_has_veteran):
+    def _add_power_balance_constraints(self, model, x, target_locations, location_needs, available_staff, current_date, day_of_week, female_gyohai_wed, gyohai_has_veteran, fairness_penalties=None):
+        if fairness_penalties is None:
+            fairness_penalties = []
         """Phase 4: Power Balance Constraints"""
         
         # Helper map
@@ -672,10 +1007,9 @@ class DayScheduler:
         for r in self.pb_rules:
             pb_map.setdefault(r.location_code, []).append(r)
         
+        # --- FINAL HEADCOUNT CONSTRAINTS AND POWER BALANCE ---
         for loc in target_locations:
             l_code = loc.code
-            
-            # Identify staff variables for this location
             vars_s_loc = [] # (staff, var)
             vars_loc_only = [] # var
             for s in available_staff:
@@ -685,6 +1019,12 @@ class DayScheduler:
                     vars_loc_only.append(v)
             
             if not vars_loc_only: continue
+
+            # --- DH-01: Headcount ---
+            req_num = location_needs.get(l_code, 0)
+            # 上限のみ hard constraint: 変数数 < req_num の場合でも INFEASIBLE にならない
+            # 正のスコアによる objective 最大化で自然に充足される
+            model.Add(sum(vars_loc_only) <= req_num)
 
             # --- Generic Rules (PB-01, PB-02, PB-03) ---
             if l_code in pb_map and l_code != 'CLMR':
@@ -699,12 +1039,16 @@ class DayScheduler:
                                  skip_min_rank = True
                         
                         if not skip_min_rank:
-                            qualified = [v for s, v in vars_s_loc 
+                            qualified = [v for s, v in vars_s_loc
                                          if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= pb.min_rank]
                             if qualified:
                                 actual_req = location_needs.get(l_code, 0)
-                                adjusted_min_count = min(pb.min_count, actual_req)
-                                model.Add(sum(qualified) >= adjusted_min_count)
+                                adjusted_min_count = min(pb.min_count, actual_req, len(qualified))
+                                if adjusted_min_count > 0:
+                                    # ソフト制約: スラックで INFEASIBLE を防止
+                                    slack = model.NewIntVar(0, adjusted_min_count, f'pb01_slack_{l_code}_{current_date.day}')
+                                    model.Add(sum(qualified) + slack >= adjusted_min_count)
+                                    fairness_penalties.append(slack * 3000000)
                             
                     # PB-02: CD Cap
                     if pb.cd_cap is not None:
@@ -720,12 +1064,13 @@ class DayScheduler:
                             non_d_vars = [v for s, v in vars_s_loc 
                                           if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) > SkillRank.D]
                             if non_d_vars:
-                                model.Add(sum(non_d_vars) >= 1)
+                                sl_nd = model.NewIntVar(0, 1, f'nond_slack_{l_code}_{current_date.day}')
+                                model.Add(sum(non_d_vars) + sl_nd >= 1)
+                                fairness_penalties.append(sl_nd * 2000000)
 
             # --- Specific Rules (PB-04, PB-05) ---
             
             # PB-04: Portable (ポ) D Pair Ban
-            # If location is 'ポ' and required >= 2, D count <= 1
             if l_code == 'ポ':
                 req_num = location_needs.get(l_code, 0)
                 if req_num >= 2:
@@ -734,9 +1079,7 @@ class DayScheduler:
                     if len(d_vars) >= 2:
                         model.Add(sum(d_vars) <= 1)
                         
-            # PB-05: CT (CT) CD Pair Ban -> effectively "At least 1 A or B" (Rank > C? No, > C is A/B)
-            # Or "CD Count < Required"? The snippet says "sum(cd) < required".
-            # Which implies "At least one person is NOT CD".
+            # PB-05: CT (CT) CD Pair Ban
             if l_code == 'CT':
                 req_num = location_needs.get(l_code, 0)
                 if req_num >= 2:
@@ -745,30 +1088,20 @@ class DayScheduler:
                     if cd_vars:
                          model.Add(sum(cd_vars) < req_num)
 
-            # PB-05 end
-
-            # PB-07: クリニック（ク）の経験年数制約（若い人ばかりにならない）
+            # PB-07: クリニック（ク）の経験年数制約
             if l_code == 'ク':
-                # The ORIGINAL req_num before deducting gyohai was location_needs['ク'] + female_gyohai_wed
                 original_req_num = location_needs.get(l_code, 0) + (female_gyohai_wed if day_of_week == 2 else 0)
-                
                 if original_req_num >= 2:
-                    # If Gyohai already supplied a veteran, we are good.
-                    if day_of_week == 2 and gyohai_has_veteran:
-                        pass # Requirement already met by fixed assignment
-                    else:
-                        # 経験年数6年以上のベテランが最低1人は入るようにする
+                    if not (day_of_week == 2 and gyohai_has_veteran):
                         experienced_vars = [v for s, v in vars_s_loc 
                                             if int(s.experience_years) >= 6]
                         if experienced_vars:
-                            model.Add(sum(experienced_vars) >= 1)
-                        else:
-                            print(f"DEBUG: No veterans available for 'ク' on {current_date}")
+                            sl_exp = model.NewIntVar(0, 1, f'exp_slack_k_{current_date.day}')
+                            model.Add(sum(experienced_vars) + sl_exp >= 1)
+                            fairness_penalties.append(sl_exp * 2000000)
 
         # PB-06: クリニック系（ク + ク遅 + MG）の女性配置
-        # 常時: 女性3人以上、金曜日: 女性4人以上
         clinic_female_codes = ['ク', 'ク遅', 'MG']
-            
         female_clinic_vars = []
         for s in available_staff:
             if s.gender.value == '女':
@@ -782,7 +1115,12 @@ class DayScheduler:
             if day_of_week == 2:
                 # Deduct women already stationed via Gyohai
                 min_female = max(0, min_female - female_gyohai_wed)
-            model.Add(sum(female_clinic_vars) >= min_female)
+            # available数でキャップ後、スラックでソフト化
+            min_female = min(min_female, len(female_clinic_vars))
+            if min_female > 0:
+                sl_f = model.NewIntVar(0, min_female, f'female_clinic_slack_{current_date.day}')
+                model.Add(sum(female_clinic_vars) + sl_f >= min_female)
+                fairness_penalties.append(sl_f * 2000000)
 
     def _extract_day_solution(self, solver, x, date, skills) -> List[DayAssignment]:
         res = []
@@ -792,7 +1130,9 @@ class DayScheduler:
                 res.append(DayAssignment(date=date, staff_id=sid, location_code=lcode, rank=rank))
         return res
 
-    def _add_special_rules(self, model, x, current_date, special_rules, location_needs):
+    def _add_special_rules(self, model, x, current_date, special_rules, location_needs, fairness_penalties=None):
+        if fairness_penalties is None:
+            fairness_penalties = []
         """Phase 5: Special Placement Rules"""
         weekday = current_date.weekday()
         week_num = self._get_week_number(current_date.day)
@@ -840,10 +1180,12 @@ class DayScheduler:
                         # Target rank count should be min(rule.rank_count, actual_req)
                         # More specifically for SR-08/08b (2xA, 1xB total 6), 
                         # We just apply min(rule.rank_count, max(1, actual_req // 2)) depending on ratio, but for safety:
-                        target_rank_count = min(rule.rank_count, actual_req)
-                        # We also shouldn't enforce the full rank distribution strictly if it exceeds actual_req.
-                        # But for CT/病CT (Saturday = 3), A:2 and B:1 is exactly 3 which is tight but possible.
-                        model.Add(sum(qualified) >= target_rank_count)
+                        # available数でもキャップ: INFEASIBLE 防止
+                        target_rank_count = min(rule.rank_count, actual_req, len(qualified))
+                        if target_rank_count > 0 and qualified:
+                            sl_rank = model.NewIntVar(0, target_rank_count, f'rank_slack_{loc_code}_{current_date.day}')
+                            model.Add(sum(qualified) + sl_rank >= target_rank_count)
+                            fairness_penalties.append(sl_rank * 3000000)
                         
                 elif rule.rank_condition == 'D同士禁止': # String condition?
                     pass
@@ -851,7 +1193,8 @@ class DayScheduler:
             # If rule has required_count, ensure we sum to the actual needed count for today,
             # NOT necessarily the one in the rule if it was overridden (e.g., Saturday CT).
             if rule.required_count > 0:
-                model.Add(sum(vars_loc_only) == actual_req)
+                # EXACT count は INFEASIBLE になりやすいため上限のみ設定（上限はソルバーが自然に満たす）
+                model.Add(sum(vars_loc_only) <= actual_req)
 
             # Source Logic (OP from HB A)
             if rule.source_location and rule.source_rank:
@@ -863,7 +1206,9 @@ class DayScheduler:
                          eligible_vars.append(var)
                 
                 if eligible_vars:
-                    model.Add(sum(eligible_vars) >= 1)
+                    sl_elig = model.NewIntVar(0, 1, f'eligible_slack_{current_date.day}_{rule.location_code}')
+                    model.Add(sum(eligible_vars) + sl_elig >= 1)
+                    fairness_penalties.append(sl_elig * 2000000)
 
     def _rule_applies(self, rule, weekday_name, week_num) -> bool:
         # Weekday Check

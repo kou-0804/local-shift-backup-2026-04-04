@@ -2,6 +2,7 @@ import pandas as pd
 import os
 from typing import List
 from datetime import datetime
+import re
 from ..models.request import Request
 
 class RequestLoader:
@@ -31,7 +32,16 @@ class RequestLoader:
                 return requests
             
         try:
-            df = pd.read_csv(file_path, encoding='utf-8-sig')
+            # Find the actual header row to handle leading empty rows
+            skip_rows = 0
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                for i in range(5):
+                    line = f.readline()
+                    if 'HolidaySymbol' in line or '日付' in line:
+                        skip_rows = i
+                        break
+            
+            df = pd.read_csv(file_path, encoding='utf-8-sig', skiprows=skip_rows)
             
             # Detect format based on columns
             if 'HolidaySymbol' in df.columns:
@@ -56,7 +66,6 @@ class RequestLoader:
                             # Assume format "ID Name" or just "Name"
                             # Try matching name against keys?
                             # OR Extract name part
-                            import re
                             # Remove leading digits and whitespace
                             name_part = re.sub(r'^[\d]+\s*', '', rs_name)
                             if name_part in name_to_id:

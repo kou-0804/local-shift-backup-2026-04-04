@@ -22,198 +22,439 @@ def assign_monthly_off_days(
     year: int,
     month: int,
     target_holidays: int = 9,
-) -> Tuple[list, Dict[str, int]]:
+) -> Tuple[list, Dict[str, int], Dict[str, int]]:
     """出力済みシフト表に対してポスト処理：
     各スタッフに月間の指定された公休数（target_holidays）になるよう「休」を自動添加する。
-    ・休み深廓になるまで自動休を増やす
-    ・6連勤超過を避けるための送「休」も含む
-    ・休暴希望（★/☆）との視覚的区別を保つ
+
+    設計方針:
+      - blank（未割当平日）は既に実質的な公休。全て '休' マーカーに変換して可視化する。
+      - blank を含めた公休数が target_holidays に満たない場合のみ、研修枠→休 の変換を行う。
+      - 公休数 = explicit_off + len(blank_days) + 研修枠から変換した日数
+      - 代休 = max(0, target_holidays - 公休数)
     """
-    # Symbols that already count as a day off
-    OFF_SYMBOLS = {'★', '★連', '☆', '☆小', '☆デ', '◆',
-                   '出/☆', '研(聴)', '退職', '出/(発)', '出(発)', '発',
-                   '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
+    PURE_HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '出/☆', '退職', '17休', '☆育'}
+    CONDITIONAL_HOLIDAY_SYMS = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
+    FORCED_WORK_SYMS = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講', '出/(聴)', '出/(発)2', '17業'}
 
     num_days = calendar.monthrange(year, month)[1]
     all_dates = [date(year, month, d) for d in range(1, num_days + 1)]
 
-    # Build fast lookup maps
-    # req_map: (staff_id, date) -> symbol
-    req_map = {(r.staff_id, r.date): r.symbol for r in requests if r.date.year == year and r.date.month == month}
-    # night_map: (staff_id, date) -> True (date = the night-shift night)
+    req_map = {(r.staff_id, r.date): r.symbol for r in requests
+               if r.date.year == year and r.date.month == month}
+
     night_map = {}
     for na in night_assignments:
         night_map[(na.staff_id, na.date)] = True
 
     # day_assign_map: (staff_id, day_num) -> location_code
-    day_assign_map = {}
+    # 同一スタッフ・同一日に複数エントリーがある場合は '休' を優先する
+    day_assign_map: Dict[tuple, str] = {}
     for da in day_result_list:
         if da.date.year == year and da.date.month == month:
-            day_assign_map[(da.staff_id, da.date.day)] = da.location_code
+            key = (da.staff_id, da.date.day)
+            existing = day_assign_map.get(key)
+            if existing is None or existing != '休':
+                day_assign_map[key] = da.location_code
 
-    additional_holidays = []  # New DayAssignment objects we create
-    overridden_work = set()   # (staff_id, day_num) pairs where we replaced work with 休
-    daikyu_counts: Dict[str, int] = {}  # staff_id -> daikyu count (max 1)
+    additional_holidays = []
+    overridden_work = set()
+    daikyu_counts: Dict[str, int] = {}
+    off_counts: Dict[str, int] = {}
 
     active_staff = [s for s in technicians if s.status == '在籍']
 
+    def _pick_best_day(candidate_days: list, status: dict) -> int:
+        """既存の 'off' 日から最も遠い候補日を選ぶ（休みを均等に分散させる）。"""
+        best_day = candidate_days[0]
+        best_score = -1
+        for dn in candidate_days:
+            min_dist = min(
+                (abs(dn - other) for other, st in status.items() if st == 'off'),
+                default=999
+            )
+            if min_dist > best_score:
+                best_score = min_dist
+                best_day = dn
+        return best_day
+
+    def _passes_7day_check(dn: int, status: dict, num_days: int) -> bool:
+        """dn を 'off' に変えた後も 7連勤ウィンドウが生じないか確認。"""
+        for start in range(max(1, dn - 6), min(num_days - 5, dn + 1)):
+            window = [status.get(start + i, 'blank') for i in range(7)]
+            if sum(1 for w in window if w == 'work') >= 7:
+                return False
+        return True
+
     for s in active_staff:
-        # --- Step 1: Build this staff member's status for every day of the month ---
-        # status[day_num (1-indexed)] = 'off' | 'work' | 'free'
-        status = {}  # day_num -> 'off'|'work'|'free'
+        # ── Step 1: 各日のステータスを分類 ──────────────────────────
+        # 'off'   = 明示的な公休マーカーあり（★/☆/日曜/祝日 等）
+        # 'work'  = 勤務（夜勤・明け・日勤配置・勤務申請）
+        # 'blank' = 何も割り当てられていない平日（実質公休だがマーカーなし）
+        status: Dict[int, str] = {}
 
         for d in all_dates:
             dn = d.day
             req = req_map.get((s.id, d))
             is_night = night_map.get((s.id, d), False)
-            is_ake = night_map.get((s.id, d - timedelta(days=1)), False)
+            is_ake   = night_map.get((s.id, d - timedelta(days=1)), False)
             existing_loc = day_assign_map.get((s.id, dn))
 
             is_jan_holiday = (d.month == 1 and d.day in [1, 2, 3])
-            is_public_off = d.weekday() == 6 or jpholiday.is_holiday(d) or is_jan_holiday
+            is_public_off  = d.weekday() == 6 or jpholiday.is_holiday(d) or is_jan_holiday
 
             if is_night:
-                status[dn] = 'work'  # Night shift = working
+                status[dn] = 'work'      # 夜勤当日 = 勤務
             elif is_ake:
-                status[dn] = 'work'  # Post-night (明け/○) = working (does NOT count as rest)
-            elif req in OFF_SYMBOLS:
-                status[dn] = 'off'   # Requested holiday (including 17休)
-            elif req == '休' or existing_loc == '休':
-                status[dn] = 'off'   # Already forced off
-            elif is_public_off and not (existing_loc and existing_loc not in ['休', '○']):
-                status[dn] = 'off'   # Sunday/Holiday with no special assignment
-            elif existing_loc and existing_loc not in ['休', '○']:
-                status[dn] = 'work'  # Has a real location assignment
-            elif req and req not in OFF_SYMBOLS:
-                status[dn] = 'work'  # Has a non-holiday request (e.g., business trip)
-            else:
-                # No assignment, no non-holiday request, not a public holiday: 
-                # This is a blank weekday - staff is at rest (not assigned anywhere)
-                # Count as 'off' for the 9-day quota, but mark as 'fillable' so we can
-                # optionally add a visible '休' marker
-                status[dn] = 'blank'  # Blank weekday - counts as off but no marker yet
-
-        # --- Step 2: Count current off-days ---
-        # 'off' = explicit off marker | 'blank' = no assignment (also counts as rest)
-        current_off = sum(1 for v in status.values() if v in ('off', 'blank'))
-        # We need explicit '休' markers to visually show the off-days
-        # 'blank' days need a '休' marker added to them
-        # How many blanks already provide 'free' rest without visual marker:
-        blank_days = [dn for dn, v in status.items() if v == 'blank']
-        explicit_off = sum(1 for v in status.values() if v == 'off')  # already has marker
-        
-        # We want total visible off = target_holidays
-        # Explicit offs already have markers. Blank days need markers to reach target_holidays visible
-        needed = target_holidays - explicit_off  # How many '休' markers to add (on blank days)
-        needed = max(0, min(needed, len(blank_days)))  # Can't add more than blanks available
-
-        # --- Step 3: Greedily pick 'free' days to become 休 ---
-        # Strategy: pick days that break up the longest consecutive working streaks
-        # Build list of consecutive work runs and pick days from longest stretches
-
-        # Convert status to a working-day streak view
-        def compute_streaks(status_dict, num_days):
-            """Return {day_num: streak_length_of_the_run_it_belongs_to}"""
-            streaks = {}
-            run_start = None
-            run_len = 0
-            run_days = []
-            pending_runs = []
-            for dn in range(1, num_days + 1):
-                if status_dict.get(dn) == 'work':
-                    if run_start is None:
-                        run_start = dn
-                        run_len = 0
-                        run_days = []
-                    run_len += 1
-                    run_days.append(dn)
+                status[dn] = 'work'      # 明け = 勤務扱い（公休カウント外）
+            elif req in FORCED_WORK_SYMS:
+                status[dn] = 'work'      # 強制勤務
+            elif req in PURE_HOLIDAY_SYMS or req == '休' or existing_loc == '休':
+                status[dn] = 'off'       # 明示的な公休マーカーあり
+            elif req in CONDITIONAL_HOLIDAY_SYMS:
+                if is_public_off:
+                    status[dn] = 'off'   # 日曜祝日の研修等は公休
                 else:
-                    if run_start is not None:
-                        pending_runs.append(list(run_days))
-                        run_start = None
-                        run_days = []
-            if run_start is not None:
-                pending_runs.append(list(run_days))
-            return pending_runs
-
-        # We want to pick `needed` days from `blank_days` and mark them as `off`.
-        # To avoid consecutive holidays (連休) and ensure balance, we pick they dynamically:
-        # always choose the blank day that is furthest from any existing 'off' day.
-        
-        assigned_count = 0
-        candidate_days = list(blank_days)
-        
-        while assigned_count < needed and candidate_days:
-            # Score each candidate day by its distance to the nearest 'off' day
-            best_day = None
-            best_score = -1
-            
-            for dn in candidate_days:
-                # Find minimum distance to an 'off' day
-                min_dist = 999
-                for other_dn, state in status.items():
-                    if state == 'off':
-                        dist = abs(dn - other_dn)
-                        if dist < min_dist:
-                            min_dist = dist
-                
-                # We want to MAXIMIZE this minimum distance
-                if min_dist > best_score:
-                    best_score = min_dist
-                    best_day = dn
-            
-            # If for some reason we can't find a best day, break
-            if best_day is None:
-                break
-                
-            # Assign the best day
-            dn = best_day
-            candidate_days.remove(dn)
-            prev_status = status[dn]
-            status[dn] = 'off'
-            
-            # Verify rolling 7-day window constraint is respected
-            ok = True
-            for start in range(max(1, dn - 6), min(num_days - 5, dn + 1)):
-                window = [status.get(start + i, 'blank') for i in range(7)]
-                work_count = sum(1 for w in window if w == 'work')
-                if work_count >= 7:  # Full 7-day working window
-                    ok = False
-                    break
-
-
-            if ok:
-                # Record this auto-休
-                d = date(year, month, dn)
-                additional_holidays.append(
-                    DayAssignment(
-                        date=d,
-                        staff_id=s.id,
-                        location_code='休',
-                        rank=SkillRank.NONE,
-                    )
-                )
-                day_assign_map[(s.id, dn)] = '休'  # Update local map
-                if prev_status == 'work':
-                    overridden_work.add((s.id, dn))  # Track work->休 overrides
-                assigned_count += 1
+                    status[dn] = 'work'  # 平日の研修等は勤務
+            elif is_public_off and not (existing_loc and existing_loc not in ['休', '○']):
+                status[dn] = 'off'       # 日曜・祝日（特別割当なし）
+            elif existing_loc and existing_loc not in ['休', '○']:
+                status[dn] = 'work'      # 日勤配置あり
+            elif req:
+                status[dn] = 'work'      # 勤務申請あり
             else:
-                status[dn] = prev_status  # Revert; can't use this day
+                status[dn] = 'blank'     # 未割当平日（実質公休）
 
-        # If we couldn't assign enough '休', record a '代休' (max 1)
-        if explicit_off + assigned_count < 9:
-            daikyu_counts[s.id] = 1
+        # ── Step 2: 公休数を把握 ──────────────────────────────────
+        explicit_off = sum(1 for v in status.values() if v == 'off')
+        blank_days   = sorted(dn for dn, v in status.items() if v == 'blank')
+        # 規定を超えないよう、変換するblank日数を上限で制限
+        # explicit_off が既に target 以上の場合（祝日が多い月など）は blank 変換ゼロ
+        blanks_quota = max(0, target_holidays - explicit_off)
 
-    # Filter out original work assignments that were overridden to 休
+        # explicit_off が既に target を超えている場合は警告
+        if explicit_off > target_holidays:
+            # 5月のように祝日が多い月は構造上避けられないため、警告(⚠️)ではなく情報として表示
+            print(f"  (i) {s.id}({getattr(s, 'name', s.id)}): "
+                  f"固定公休({explicit_off}日)が目標({target_holidays}日)を超過しています。", flush=True)
+
+        # ── Phase 1: blank日を規定に必要な分だけ '休' に変換 ──────
+        # 変換する blank 日は「既存の off 日から最も遠い日」を優先して均等に分散させる
+        # blank → off は work_count を変えないため 7日窓チェックは常に通過する
+        blanks_to_convert: list = []
+        remaining_blank_pool = list(blank_days)
+
+        while len(blanks_to_convert) < blanks_quota and remaining_blank_pool:
+            dn = _pick_best_day(remaining_blank_pool, status)
+            remaining_blank_pool.remove(dn)
+            blanks_to_convert.append(dn)
+            status[dn] = 'off'  # スコアリング用に即時反映
+
+        for dn in blanks_to_convert:
+            d_obj = date(year, month, dn)
+            additional_holidays.append(DayAssignment(
+                date=d_obj, staff_id=s.id, location_code='休', rank=SkillRank.NONE,
+            ))
+            day_assign_map[(s.id, dn)] = '休'
+        # remaining_blank_pool に残った blank 日は空欄のまま（次フェーズで仕事が割当可能）
+
+        # ── Step 3: 公休数・代休数を確定 ──────────────────────────
+        actual_off = explicit_off + len(blanks_to_convert)
+        off_counts[s.id] = actual_off
+
+        deficit = target_holidays - actual_off
+        if deficit > 0:
+            daikyu_counts[s.id] = deficit
+
+    # 研修枠→休 に変換された元の勤務割当を除去
     filtered_result = [
         da for da in day_result_list
         if not (da.date.year == year and da.date.month == month
                 and (da.staff_id, da.date.day) in overridden_work)
     ]
-    total_daikyu = sum(1 for c in daikyu_counts.values() if c > 0)
-    print(f"✅ {target_holidays}日休職処理: {len(additional_holidays)}件の自動休を追加 ({len(overridden_work)}件の勤務割当を休に変更) - {total_daikyu}名に代休1日を付与")
-    
-    return list(filtered_result) + additional_holidays, daikyu_counts
+
+    total_daikyu      = sum(1 for c in daikyu_counts.values() if c > 0)
+    total_daikyu_days = sum(daikyu_counts.values())
+    for sid, cnt in sorted(daikyu_counts.items()):
+        if cnt > 0:
+            name = next((s.name for s in technicians if s.id == sid), sid)
+            print(f"  ⚠️ 代休 {sid}({name}): {cnt}日 (公休={off_counts.get(sid,0)}日)", flush=True)
+    print(f"✅ {target_holidays}日公休処理: {len(additional_holidays)}件の自動休を追加 "
+          f"({len(overridden_work)}件の研修割当を休に変更) - "
+          f"{total_daikyu}名に計{total_daikyu_days}日の代休を付与", flush=True)
+
+    return list(filtered_result) + additional_holidays, daikyu_counts, off_counts
+
+
+def pre_seed_rest_days(technicians, requests, night_assignments, year: int, month: int,
+                        target_holidays: int = 9, skills=None, locations=None):
+    """
+    日勤スケジューリング前に、スタッフごとの不足公休日を月全体に均等分散して
+    ☆（指定休）として事前割り当てする。
+    スキル枯渇チェック付き：この人を休ませると特定業務の担当者がゼロになる日は除外。
+    これにより月末に「全員バジェット切れ」の崖が発生するのを防ぐ。
+    """
+    from shift_scheduler.src.models.request import Request
+    from shift_scheduler.src.models.skill import SkillRank
+
+    HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '研(聴)', '退職',
+                    '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)',
+                    '研(座)', '研(役)', '出/(役)', '17休', '☆育'}
+    FORCED_WORK_SYMS = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講', '出/(聴)', '17業'}
+    UNAVAIL_SYMS = HOLIDAY_SYMS | FORCED_WORK_SYMS | {'夜希', '17業', '17休'}
+
+    all_dates = [date(year, month, d) for d in range(1, calendar.monthrange(year, month)[1] + 1)]
+    req_map = {(r.staff_id, r.date): r.symbol for r in requests}
+    night_map = {}
+    for na in night_assignments:
+        night_map[(na.staff_id, na.date)] = True
+
+    # 処理済みの事前公休を累積管理（後のスタッフの安全チェックに使う）
+    pre_seeded_map: Dict[Tuple, bool] = {}
+
+    def _is_available_on(staff_id: str, d) -> bool:
+        """このスタッフがその日に出勤可能かを判定（夜勤・明け・休暇・強制業務を除く）"""
+        if night_map.get((staff_id, d), False):
+            return False
+        if night_map.get((staff_id, d - timedelta(days=1)), False):
+            return False
+        req = req_map.get((staff_id, d))
+        if req and req in UNAVAIL_SYMS:
+            return False
+        if pre_seeded_map.get((staff_id, d), False):
+            return False
+        return True
+
+    def _qualifies_for_location(staff_id: str, loc_code: str) -> bool:
+        """このスタッフが業務のスキル条件を満たすか"""
+        if not skills:
+            return True
+        s_skills = skills.get(staff_id, {})
+        rank = s_skills.get(loc_code, SkillRank.NONE)
+        if loc_code == 'HB':
+            return rank >= SkillRank.A
+        if loc_code in ('ア', '心'):
+            return rank >= SkillRank.B
+        return rank > SkillRank.NONE
+
+    # 希少業務（担当可能者が限られる業務）：通常と同等のバッファ(+1)で保護する
+    # ※ 以前はreq（バッファなし）を使っていたが、それは逆に無防備だったため修正
+    SCARCE_LOCS = {'ク遅', 'M遅', '超遅', 'HB', 'ア', '心', '館山'}
+
+    def _is_critical_on(staff_id: str, d) -> bool:
+        """
+        この日にこのスタッフを休ませると人員が不足する場合に True を返す（詰み防止）。
+
+        2段階チェック:
+        1. グローバル充足率チェック: 自分を除いた出勤可能人数が当日の全業務合計必要人数を
+           GLOBAL_SAFETY_MARGIN 以下しか上回らない場合はクリティカル。
+           （業務またがり競合・大量☆集中を防ぐ本質的な防衛線）
+        2. 希少スキルチェック: 担当可能者が少ない業務（ク遅, HB等）で担当者が枯渇する場合。
+        """
+        if not skills or not locations:
+            return False
+        weekday = d.weekday()
+        is_jan = (d.month == 1 and d.day in [1, 2, 3])
+        is_holiday_day = is_jan or jpholiday.is_holiday(d) or weekday == 6
+        if is_holiday_day:
+            return False  # 休日は '出' だけなのでクリティカル判定不要
+
+        # --- チェック1: グローバル充足率 ---
+        GLOBAL_SAFETY_MARGIN = 3  # 合計出勤可能人数が必要合計+3を下回ったら禁止
+        total_required = sum(
+            loc.get_required_count(weekday)
+            for loc in locations
+            if loc.is_active and not loc.code.startswith('(')
+            and loc.get_required_count(weekday) > 0
+        )
+        total_others_avail = sum(
+            1 for s in technicians
+            if s.id != staff_id and s.status == '在籍'
+            and _is_available_on(s.id, d)
+        )
+        if total_others_avail < total_required + GLOBAL_SAFETY_MARGIN:
+            return True  # 全体的に人員タイト → この日に☆を入れない
+
+        # --- チェック2: 希少スキル枯渇チェック ---
+        for loc in locations:
+            if not loc.is_active:
+                continue
+            req_count = loc.get_required_count(weekday)
+            if req_count <= 0:
+                continue
+            if not _qualifies_for_location(staff_id, loc.code):
+                continue  # この人はそもそもこの業務に入れない → 除いても影響なし
+
+            # この業務に入れる他スタッフ（自分以外）が何人利用可能か数える
+            others_available = sum(
+                1 for s in technicians
+                if s.id != staff_id and s.status == '在籍'
+                and _qualifies_for_location(s.id, loc.code)
+                and _is_available_on(s.id, d)
+            )
+
+            # 全業務統一: +1 バッファ（1人余裕を残す）
+            threshold = req_count + 1
+            if others_available < threshold:
+                return True
+
+        return False
+
+    pre_seeded: List = []
+    active_staff = [s for s in technicians if s.status == '在籍']
+
+    # ===== 全業務対象の「同日☆集中防止」トラッカー =====
+    # key: (loc_code, date), value: その日にその業務の有資格者で☆になった人数
+    # SCARCE_LOCSに限らず、全業務でこの集中を追跡する。
+    skill_seeded_on_day: Dict[Tuple, int] = {}
+
+    # 希少業務（担当可能者が限られる業務）：通常と同等のバッファ(+1)で保護する
+    SCARCE_LOCS = {'ク遅', 'M遅', '超遅', 'HB', 'ア', '心', '館山'}
+
+    def _would_exceed_skill_capacity(staff_id: str, d) -> bool:
+        """
+        この日にこのスタッフを☆にすると、いずれかの業務で
+        「必要人数+1バッファ」を下回る（ギリギリになる）か確認。
+        全業務対象（SCARCE_LOCSに限定しない）。
+        """
+        if not skills or not locations:
+            return False
+        weekday = d.weekday()
+        for loc in locations:
+            if not loc.is_active:
+                continue
+            req_count = loc.get_required_count(weekday)
+            if req_count <= 0:
+                continue
+            if not _qualifies_for_location(staff_id, loc.code):
+                continue  # この人はこの業務に入れない→関係なし
+
+            # この日にこの業務の有資格者で、すでに☆で確定している人数
+            already_seeded = skill_seeded_on_day.get((loc.code, d), 0)
+
+            # この業務の出勤可能な全有資格者数（退職・育休・夜勤・明け以外）
+            total_active_qualified = sum(
+                1 for s in technicians
+                if s.status == '在籍'
+                and _qualifies_for_location(s.id, loc.code)
+                and req_map.get((s.id, d)) not in {'退職', '◆', '☆育'}
+                and not night_map.get((s.id, d), False)
+                and not night_map.get((s.id, d - timedelta(days=1)), False)
+            )
+
+            # 自分が☆になった後に残る有資格者
+            remaining_after = total_active_qualified - already_seeded - 1
+
+            # バッファ込みの必要人数を下回ったらプリシード禁止
+            threshold = req_count + 1  # 一律+1バッファ（1人余裕を残す）
+            if remaining_after < threshold:
+                return True
+        return False
+
+    def _register_skill_seeded(staff_id: str, d):
+        """プリシード決定後に全業務のカウントを更新する。"""
+        if not skills or not locations:
+            return
+        weekday = d.weekday()
+        for loc in locations:
+            if not loc.is_active:
+                continue
+            if loc.get_required_count(weekday) <= 0:
+                continue
+            if _qualifies_for_location(staff_id, loc.code):
+                key = (loc.code, d)
+                skill_seeded_on_day[key] = skill_seeded_on_day.get(key, 0) + 1
+
+    # 1日あたりのプレシード人数を制限（同日に多くの人を休ませ過ぎない）
+    total_active = len(active_staff)
+    max_preseed_per_day = max(3, total_active // 4)  # 最低3人、最大25%
+    preseed_count_on_day: Dict[date, int] = {}
+
+    for s in active_staff:
+
+        # === assign_monthly_off_days と同じロジックで公休数を予測する ===
+        explicit_off = 0
+        blank_days_count = 0
+        for d in all_dates:
+            req = req_map.get((s.id, d))
+            is_night = night_map.get((s.id, d), False)
+            is_ake = night_map.get((s.id, d - timedelta(days=1)), False)
+            is_jan = (d.month == 1 and d.day in [1, 2, 3])
+            is_pub = is_jan or jpholiday.is_holiday(d) or d.weekday() == 6
+
+            if is_night or is_ake:
+                pass  # 勤務扱い
+            elif req in FORCED_WORK_SYMS:
+                pass  # 強制業務
+            elif req in HOLIDAY_SYMS:
+                explicit_off += 1
+            elif is_pub:
+                explicit_off += 1
+            elif not req:
+                blank_days_count += 1
+
+        # ==== 事前公休割り当て（Pre-seeding）====
+        needed = max(0, target_holidays - explicit_off)
+        if needed <= 0:
+            continue
+
+        # 候補日：既存リクエスト・公休・夜勤明けがない平日・土曜
+        # かつスキル枯渇・同日集中を引き起こさない日のみ
+        candidates = []
+        skipped_critical = 0
+        for d in all_dates:
+            req = req_map.get((s.id, d))
+            is_night = night_map.get((s.id, d), False)
+            is_ake = night_map.get((s.id, d - timedelta(days=1)), False)
+            is_jan = (d.month == 1 and d.day in [1, 2, 3])
+            is_pub = is_jan or jpholiday.is_holiday(d) or d.weekday() == 6
+
+            if is_pub or is_night or is_ake:
+                continue
+            if req:  # 何らかのリクエストあり → 上書き不可
+                continue
+            if _is_critical_on(s.id, d):
+                skipped_critical += 1
+                continue
+            # ★ 全業務対象の同日集中チェック（旧SCARCE_LOCSのみを廃止）
+            if _would_exceed_skill_capacity(s.id, d):
+                skipped_critical += 1
+                continue
+            if preseed_count_on_day.get(d, 0) >= max_preseed_per_day:
+                skipped_critical += 1
+                continue
+            candidates.append(d)
+
+        if skipped_critical > 0:
+            print(f"    {s.id}: クリティカル日{skipped_critical}日をスキップ", flush=True)
+
+        if not candidates:
+            print(f"    {s.id}: 安全な候補日なし（{needed}日不足のまま）", flush=True)
+            continue
+
+        # needed 個の休みを月全体に均等に分散して選ぶ
+        selected: list[date] = []
+        n = len(candidates)
+        interval = n / needed if needed > 0 else 1
+        for i in range(needed):
+            start = int(i * interval)
+            end = int((i + 1) * interval)
+            bucket = candidates[start:end] if end <= n else candidates[start:]
+            if not bucket:
+                break
+            # バケツの中で「これまで一番プレシードが少ない日」を選ぶ
+            chosen = min(bucket, key=lambda d: preseed_count_on_day.get(d, 0))
+            selected.append(chosen)
+            pre_seeded_map[(s.id, chosen)] = True
+            _register_skill_seeded(s.id, chosen)  # ★ 全業務対象のカウント更新
+            preseed_count_on_day[chosen] = preseed_count_on_day.get(chosen, 0) + 1
+
+        for d in selected:
+            pre_seeded.append(Request(staff_id=s.id, date=d, symbol='休'))
+
+    print(f"  事前公休割り当て: {len(pre_seeded)}件", flush=True)
+    return pre_seeded
+
+
 
 def main():
     parser = argparse.ArgumentParser(description='勤務表自動作成システム')
@@ -293,101 +534,87 @@ def main():
     print(f"  心カテスキル: {cath_count}名", flush=True)
     print(flush=True)
     
-    # --- Load Previous Month History from Requests ---
-    print("🔙 前月の夜勤実績を申請データから確認中...", flush=True)
+    # 前月末の夜勤実績を申請データから取得（当月1日の明け判定に必要）
+    print("🔙 前月の夜勤実績を確認中...", flush=True)
     start_date = date(year, month, 1)
     prev_month_limit = start_date - timedelta(days=7)
     prev_night_history = []
     for r in requests:
-        if r.date < start_date and r.date >= prev_month_limit:
-            if '夜' in r.symbol:
-                na = NightAssignment(date=r.date, staff_id=r.staff_id, role='History')
-                prev_night_history.append(na)
-    print(f"  前月の夜勤実績(申請より): {len(prev_night_history)}件", flush=True)
+        if prev_month_limit <= r.date < start_date and '夜' in r.symbol:
+            prev_night_history.append(
+                NightAssignment(date=r.date, staff_id=r.staff_id, role='History')
+            )
+    print(f"  前月の夜勤実績: {len(prev_night_history)}件 -> 統合", flush=True)
 
     # 夜勤スケジューリング
     print("🌙 夜勤スケジューリング実行中...", flush=True)
-    
-    night_scheduler = NightScheduler(
-        staff_list=technicians,
-        year=year,
-        month=month
-    )
-    night_result = night_scheduler.schedule(requests, night_counts, prev_night_history) # Returns List[NightAssignment]
+    night_scheduler = NightScheduler(staff_list=technicians, year=year, month=month)
+    night_result = night_scheduler.schedule(requests, night_counts, prev_night_history)
     print(f"  夜勤配置数: {len(night_result)}件", flush=True)
     print(flush=True)
-    
-    # Data Conversion: List[NightAssignment] -> Dict[int, List[str]] (day -> [ids])
+
+    # 夜勤データ変換: List[NightAssignment] -> Dict[day -> List[staff_id]]
     night_assignments_dict = {}
     for na in night_result:
-        if na.date.day not in night_assignments_dict:
-            night_assignments_dict[na.date.day] = []
-        night_assignments_dict[na.date.day].append(na.staff_id)
-        
-    # --- Load Previous Month History from Requests (Req 4 Fix via User Feedback) ---
-    print("🔙 前月の夜勤実績を申請データから確認中...", flush=True)
-    
-    # We need to find 'Night' requests in the previous month (last few days)
-    # and treat them as confirmed Night Assignments for the scheduler's context.
-    
-    # Filter for entries explicitly marked as Night in previous month
-    # We look back up to 7 days just to be safe for intervals, 
-    # but strictly we only need 2 days for the "Holiday after Post-Night" rule.
-    # User said "Last month's night info is in Requests".
-    
-    start_date = date(year, month, 1)
-    prev_month_limit = start_date - timedelta(days=7)
-    
-    prev_night_history = []
-    
-    for r in requests:
-        # Check if date is in previous month range
-        if r.date < start_date and r.date >= prev_month_limit:
-            # Check for Night symbol
-            # Usually '夜希' (Night Request) or just '夜' if user entered it that way.
-            # We assume any request containing '夜' in the past is a confirmed Night Shift.
-            if '夜' in r.symbol:
-                # Create a NightAssignment object
-                # Role is dummy (not needed for constraint check usually)
-                na = NightAssignment(date=r.date, staff_id=r.staff_id, role='History')
-                prev_night_history.append(na)
-                # print(f"  Found history: {r.date} {r.staff_id} {r.symbol}")
+        night_assignments_dict.setdefault(na.date.day, []).append(na.staff_id)
 
     print(f"  前月の夜勤実績(申請より): {len(prev_night_history)}件 -> 統合", flush=True)
-    
-    # Merge for Scheduler
-    # We keep `night_result` clean for Excel output (current month only).
-    # We pass `full_night_assignments` to DayScheduler.
+
+    # 当月用と引き継ぎ用を分離
+    # night_result     = Excel出力用（当月分のみ）
+    # full_night_assignments = DayScheduler用（前月末分を含む）
     full_night_assignments = night_result + prev_night_history
-    
-    # 日勤スケジューリング
-    print("☀️ 日勤スケジューリング実行中...", flush=True)
+
+    # 公休目標日数を読み込む
+    target_holidays = loader.load_monthly_holidays(year, month)
+    print(f"📅 今月の公休目標: {target_holidays}日", flush=True)
+    print(flush=True)
+
+    # ===== Phase 1: 公休先行配置（スキル枯渇チェック付き） =====
+    print("🌅 公休先行配置（Phase 1）実行中...", flush=True)
+    pre_seeded = pre_seed_rest_days(
+        technicians=technicians,
+        requests=requests,
+        night_assignments=full_night_assignments,
+        year=year,
+        month=month,
+        target_holidays=target_holidays,
+        skills=skills,
+        locations=locations,
+    )
+    requests_with_preseed = requests + pre_seeded
+    print(flush=True)
+
+    # ===== Phase 2: 日勤スケジューリング（研修配置なし）=====
+    # 研修枠（拡大配置）は自動配置せず、担当者が手動で調整する
+    print("☀️ 日勤スケジューリング実行中（研修なし）...", flush=True)
     day_scheduler = DayScheduler(
-        staff_list=technicians, 
+        staff_list=technicians,
         skills=skills,
         locations=locations,
         pb_rules=pb_rules,
         rules=special_rules,
         training_rules=training_rules,
         year=year,
-        month=month
+        month=month,
+        disable_training=True,
+        target_holidays=target_holidays,
     )
-    
-    day_result_list, daily_location_needs = day_scheduler.schedule(requests, full_night_assignments) # Pass Full List
+    day_result_list, daily_location_needs = day_scheduler.schedule(requests_with_preseed, full_night_assignments)
     print(f"  日勤配置数: {len(day_result_list)}件", flush=True)
     print(flush=True)
 
-    # ===== Post-Processing: Assign exactly X off-days per staff =====
-    target_holidays = loader.load_monthly_holidays(year, month)
-    print(f"📅 {target_holidays}日休暇自動配置中...", flush=True)
-    day_result_list, daikyu_counts = assign_monthly_off_days(
+    # ===== 公休付与（規定日数に合わせて '休' を追加） =====
+    # requests_with_preseed を渡して pre-seed 済み ☆ を公休としてカウントさせる
+    print(f"📅 {target_holidays}日公休付与中...", flush=True)
+    day_result_list, daikyu_counts, off_counts = assign_monthly_off_days(
         technicians=technicians,
         day_result_list=day_result_list,
         night_assignments=full_night_assignments,
-        requests=requests,
+        requests=requests_with_preseed,
         year=year,
         month=month,
-        target_holidays=target_holidays
+        target_holidays=target_holidays,
     )
     print(flush=True)
     
@@ -417,14 +644,16 @@ def main():
             day_assignments_dict[d_day][da.location_code] = []
         day_assignments_dict[d_day][da.location_code].append(da.staff_id)
         
-    # Requests Conversion
+    # Requests Conversion（pre-seeded ☆ を含めて Excel に反映する）
     requests_dict = {}
-    for r in requests:
+    for r in requests_with_preseed:
         d_day = r.date.day
         if r.date.year == year and r.date.month == month:
             if d_day not in requests_dict:
                 requests_dict[d_day] = {}
-            requests_dict[d_day][r.staff_id] = r.symbol
+            # 元の申請が既にある場合は上書きしない（pre-seeded ☆ より元申請を優先）
+            if r.staff_id not in requests_dict[d_day]:
+                requests_dict[d_day][r.staff_id] = r.symbol
 
     # ── Validation (Configure Validation Errors) ──
     print("🔍 最終検証・エラーレポート作成中...", flush=True)
@@ -468,6 +697,7 @@ def main():
         on_call_assignments=on_call_assignments,
         name_mapper=None, # Optional if not used
         daikyu_counts=daikyu_counts,
+        off_counts=off_counts,
         validation_errors=validation_errors
     )
     generator.generate(output_path)

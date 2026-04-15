@@ -30,7 +30,7 @@ class NightScheduler:
         
         # Symbol Definitions
         NIGHT_REQUEST_SYMBOLS = ['夜希']
-        HOLIDAY_SYMBOLS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '研(聴)', '退職'}
+        HOLIDAY_SYMBOLS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '研(聴)', '退職', '☆育', '休'}
         SPECIAL_NO_NIGHT = {'講', '会議', '全会', '業配', '業出'}
         
         # Build Request Map
@@ -56,18 +56,21 @@ class NightScheduler:
                 x[s.id, d] = model.NewBoolVar(f'n_{s.id}_{d}')
         
         # 2. Hard Constraints
-        self._add_hard_constraints(model, x, requests, night_quotas, prev_map)
+        penalties = []
+        self._add_hard_constraints(model, x, requests, night_quotas, prev_map, penalties)
         
         # 3. Soft Constraints
-        self._add_soft_constraints(model, x, night_quotas, prev_map)
+        self._add_soft_constraints(model, x, night_quotas, prev_map, penalties)
         
         # 4. Solve
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 60  # 最大60秒（以前は300秒）
+        solver.parameters.random_seed = 42      # 再現性確保
+        solver.parameters.num_workers = 1       # シングルスレッド（完全再現性）
         # Enable search logging
         solver.parameters.log_search_progress = True
-        
+
         status = solver.Solve(model)
         
         print(f"Solver Status: {solver.StatusName(status)}")
@@ -88,10 +91,14 @@ class NightScheduler:
             
             raise Exception("No solution found for night shifts.")
 
-    def _add_hard_constraints(self, model, x, requests, night_quotas, prev_map):
-        # NH-01: 3 staff per day
+    def _add_hard_constraints(self, model, x, requests, night_quotas, prev_map, penalties):
+        req_map = {(r.staff_id, r.date): r.symbol for r in requests}
+        
+        # NH-01: 3 staff per day (動的拡張: 夜希が4人以上いる日はその人数を最大枠とする)
         for d in self.dates:
-            model.Add(sum(x[s.id, d] for s in self.night_staff) == 3)
+            yaki_count = sum(1 for s in self.night_staff if req_map.get((s.id, d)) == '夜希')
+            target_capacity = max(3, yaki_count)
+            model.Add(sum(x[s.id, d] for s in self.night_staff) == target_capacity)
             
         # NH-02: Monthly quota
         # Total Quota (90) != Total Required (93). Strict equality is Impossible.
@@ -126,7 +133,7 @@ class NightScheduler:
         #  - Night Mandatory (Night Request)
         
         # Symbol Classification matches Spec 8.1 / 8.2 logic
-        HOLIDAY_SYMBOLS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '研(聴)', '退職'}
+        HOLIDAY_SYMBOLS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '研(聴)', '退職', '☆育', '休'}
         # NS-05: Request Pattern (Night -> Ake -> Holiday Request) (Weight 20)
         # User Request: If Holiday Request on Day D, prefer Night on Day D-2.
         # [DISABLED] This constraint caused INFEASIBILITY on Jan 20 (Tuesday Angio shortage).
@@ -156,8 +163,6 @@ class NightScheduler:
         SPECIAL_NO_NIGHT = {'講', '会議', '全会', '業配', '業出'}
         # 17-gyou: No Night on Day D. No Night on Day D-1.
         
-        req_map = {(r.staff_id, r.date): r.symbol for r in requests}
-        
         for s in self.night_staff:
             for d in self.dates:
                 symbol = req_map.get((s.id, d))
@@ -166,7 +171,10 @@ class NightScheduler:
                 
                 # NH-09: Mandatory Night
                 if symbol == '夜希':
-                    model.Add(x[s.id, d] == 1)
+                    missed_yaki = model.NewBoolVar(f'missed_yaki_{s.id}_{d}')
+                    model.Add(x[s.id, d] == 0).OnlyEnforceIf(missed_yaki)
+                    model.Add(x[s.id, d] == 1).OnlyEnforceIf(missed_yaki.Not())
+                    penalties.append(missed_yaki * 5000000)
                     continue
                 
                 # NH-05, NH-07, NH-08: Night Forbidden on Day D
@@ -236,8 +244,7 @@ class NightScheduler:
             model.Add(sum(x[s.id, d] for s in angio_staff) >= 1)
             model.Add(sum(x[s.id, d] for s in cath_staff) >= 1)
 
-    def _add_soft_constraints(self, model, x, night_quotas, prev_map):
-        penalties = []
+    def _add_soft_constraints(self, model, x, night_quotas, prev_map, penalties):
         
         # NS-08: HB Coverage (Weight 100,000 - HIGH PRIORITY)
         # Try to ensure at least 1 person has night_hb skill.
@@ -509,46 +516,38 @@ class NightScheduler:
             roles = ['MR', 'アンギオ', '心カテ']
             
             found_roles = False
-            for p in itertools.permutations(today_staff):
-                # Check if p[0] can MR, p[1] can Angio, p[2] can Cath
-                # Note: 'night_mr' etc are bools
-                if (p[0].night_mr and 
-                    p[1].night_angio and 
-                    p[2].night_cath):
-                    
-                    # Valid assignment
-                    assignments.append(NightAssignment(date=d, staff_id=p[0].id, role='MR'))
-                    assignments.append(NightAssignment(date=d, staff_id=p[1].id, role='アンギオ'))
-                    assignments.append(NightAssignment(date=d, staff_id=p[2].id, role='心カテ'))
-                    found_roles = True
-                    break
+            # 3人ぴったりの場合は厳密な順列で割り当て
+            if len(today_staff) == 3:
+                for p in itertools.permutations(today_staff):
+                    if (p[0].night_mr and 
+                        p[1].night_angio and 
+                        p[2].night_cath):
+                        assignments.append(NightAssignment(date=d, staff_id=p[0].id, role='MR'))
+                        assignments.append(NightAssignment(date=d, staff_id=p[1].id, role='アンギオ'))
+                        assignments.append(NightAssignment(date=d, staff_id=p[2].id, role='心カテ'))
+                        found_roles = True
+                        break
             
+            # 4人以上、または3人で役割が埋まらない場合
             if not found_roles:
-                # Fallback: Just assign based on what they HAVE, even if duplicates/overlap
-                # This technically shouldn't happen if constraint NH-06 worked, 
-                # UNLESS one person covers multiple needed roles and we have 3 people.
-                # Example: A(MR, Angio), B(Cath), C(None). 
-                # Solved constraint says sum(MR)>=1 (A), sum(Angio)>=1 (A), sum(Cath)>=1 (B).
-                # But we need 3 distinct roles. 
-                # If C has NO skills, he cannot take a role?
-                # Spec 4.1 says: "1日の夜勤は3名体制で、以下の役割を担当... MR担当, アンギオ担当, 心カテ担当"
-                # Does every person NEED a role? Or just we need coverage?
-                # "3名全員が異なる役割を担当するとは限らない" (4.5 Note) -> ONE PERSON CAN COVER MULTIPLE?
-                # "1人が複数スキルを持つことがあるため、3名全員が異なる役割を担当するとは限らない。"
-                # This implies the roles might just be "MR operator", "Angio operator", "Cath operator". 
-                # But we have 3 staff. 
-                # Maybe Staff 1 = MR, Staff 2 = Angio, Staff 3 = Cath.
-                # If Staff 1 does MR and Angio? Then Staff 2 is free?
-                # For output CSV, we need "Role".
-                # Let's try to assign best fit.
-                
-                # Simple greedy fallback
-                assigned_count = 0
+                # それぞれが可能な役割をチェックし、最低1人はMR・アンギオ・カテに割り当てる
+                mr_assigned, angio_assigned, cath_assigned = False, False, False
                 for s in today_staff:
-                    r_assigned = "未定"
-                    if s.night_mr: r_assigned = 'MR'
-                    elif s.night_angio: r_assigned = 'アンギオ'
-                    elif s.night_cath: r_assigned = '心カテ'
+                    r_assigned = "未定(増員)"
+                    if s.night_mr and not mr_assigned:
+                        r_assigned = 'MR'
+                        mr_assigned = True
+                    elif s.night_angio and not angio_assigned:
+                        r_assigned = 'アンギオ'
+                        angio_assigned = True
+                    elif s.night_cath and not cath_assigned:
+                        r_assigned = '心カテ'
+                        cath_assigned = True
+                    # 余った人は持っているスキルを適当に表示するか、ヘルプとする
+                    elif s.night_mr: r_assigned = 'MR(増)'
+                    elif s.night_angio: r_assigned = 'アンギオ(増)'
+                    elif s.night_cath: r_assigned = '心カテ(増)'
+                    
                     assignments.append(NightAssignment(date=d, staff_id=s.id, role=r_assigned))
 
         return assignments

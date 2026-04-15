@@ -255,11 +255,14 @@ class DataLoader:
                 ids = []
                 for n in names:
                     if not n: continue
-                    # Find matching staff (ignore spaces in staff list)
+                    # Find matching staff (ignore spaces/special chars in names)
+                    clean_target = n.replace(' ', '').replace('　', '').strip()
+                    if not clean_target: continue
+                    
                     matched_id = None
                     for s in staff_list:
-                        clean_staff_name = s.name.replace(' ', '').replace('　', '')
-                        if n in clean_staff_name:
+                        clean_staff_name = s.name.replace(' ', '').replace('　', '').strip()
+                        if clean_target in clean_staff_name or clean_staff_name in clean_target:
                             matched_id = s.id
                             break
                     if matched_id:
@@ -270,14 +273,24 @@ class DataLoader:
 
             for _, row in df.iterrows():
                 modality = str(row['対象モダリティ']).strip()
-                instructors = map_names_to_ids(row.get('指導者名_カンマ区切り', ''))
+                instructors_raw = str(row.get('指導者名_カンマ区切り', '')).strip()
                 trainees = map_names_to_ids(row.get('育成対象者名_カンマ区切り', ''))
+                display_name = str(row.get('表示名', '')).strip()
                 
-                if modality and instructors and trainees:
+                # Check for "ランクA保持者" flag
+                instructors = []
+                if "ランクA保持者" in instructors_raw:
+                    # Mark for dynamic lookup in DayScheduler
+                    instructors = ["RANK_A_ONLY"]
+                else:
+                    instructors = map_names_to_ids(instructors_raw)
+                
+                if modality and trainees:
                     rules.append({
                         'modality': modality,
                         'instructors': instructors,
-                        'trainees': trainees
+                        'trainees': trainees,
+                        'display_name': display_name
                     })
             if rules:
                 print(f"  育成・業務拡大ルール: {len(rules)}件ロードしました")
