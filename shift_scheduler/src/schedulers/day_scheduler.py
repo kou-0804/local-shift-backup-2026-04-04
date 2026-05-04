@@ -813,19 +813,28 @@ class DayScheduler:
                                  model.Add(x[s.id, l.code] == 0)
 
         # DH-03: Required Headcount with Understaffing Penalty
+        # 場所の重要度に応じてペナルティを調整する。
+        # パワーバランス制約(3M)と競合しないよう、2倍程度の控えめな引き上げにとどめる。
+        DEFICIT_PENALTIES = {
+            'CT':   200000,  # 2倍: ポ/クへの副作用を最小化しつつCT充足を促進
+            'MG':   150000,  # 1名枠の完全未配置を防ぐ
+            'OP':   150000,
+            '超遅': 150000,
+        }
+        DEFICIT_PENALTY_DEFAULT = 100000
         deficit_vars = []
-        DEFICIT_PENALTY = 100000 # 配置不足1名につき10万点のペナルティ
 
         for loc in target_locations:
             req = location_needs[loc.code]
             vars_l = [x[s.id, loc.code] for s in available_staff if (s.id, loc.code) in x]
-            
+
             # shortage = 目標人数(req) - 実際の配置人数
             shortage = model.NewIntVar(0, req, f'shortage_{loc.code}_{current_date}')
             model.Add(sum(vars_l) + shortage == req)
-            
-            # 配置不足分をペナルティとして記録
-            deficit_vars.append(shortage * DEFICIT_PENALTY)
+
+            # 場所別ペナルティを適用
+            penalty = DEFICIT_PENALTIES.get(loc.code, DEFICIT_PENALTY_DEFAULT)
+            deficit_vars.append(shortage * penalty)
             
         # Add Training Restrictions
         for tm in training_mappings:
