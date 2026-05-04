@@ -344,8 +344,15 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
             # 自分が☆になった後に残る有資格者
             remaining_after = total_active_qualified - already_seeded - 1
 
-            # バッファ込みの必要人数を下回ったらプリシード禁止
-            threshold = req_count + 1  # 一律+1バッファ（1人余裕を残す）
+            # 重要場所は大きなバッファで保護し、同日に休みが集中するのを防ぐ
+            CRITICAL_BUFFER = {
+                '病CT':  4,   # req=6 → threshold=10
+                'CT':    3,   # req=4 → threshold=7
+                '病院MR': 3,  # req=3 → threshold=6
+                'CLMR':  2,   # req=4 → threshold=6
+                'MG':    2,   # req=1 → threshold=3
+            }
+            threshold = req_count + CRITICAL_BUFFER.get(loc.code, 1)
             if remaining_after < threshold:
                 return True
         return False
@@ -681,6 +688,8 @@ def main():
          print("  ✅ 全ての要件が正常に満たされています")
     else:
          print(f"  ⚠️ {len(validation_errors)}件の警告が発生しました")
+         for err in validation_errors:
+             print(f"    - {err}")
 
     # Excel出力
     print("📊 Excel生成中...", flush=True)
