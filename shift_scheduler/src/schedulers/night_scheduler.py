@@ -246,9 +246,9 @@ class NightScheduler:
 
     def _add_soft_constraints(self, model, x, night_quotas, prev_map, penalties):
         
-        # NS-08: HB Coverage (Weight 100,000 - HIGH PRIORITY)
+        # NS-08: HB Coverage (Weight 300,000 - HIGH PRIORITY)
         # Try to ensure at least 1 person has night_hb skill.
-        WEIGHT_HB_COVERAGE = 100000
+        WEIGHT_HB_COVERAGE = 300000
         hb_staff = [s for s in self.night_staff if getattr(s, 'night_hb', False)]
         if hb_staff:
             for d in self.dates:
