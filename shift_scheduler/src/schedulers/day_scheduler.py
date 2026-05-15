@@ -177,7 +177,7 @@ class DayScheduler:
                 base_code = self._get_base_location_code(a.location_code)
                 c[base_code] = c.get(base_code, 0) + 1
             # Update consecutive work days AND total_work_count
-            PURE_HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '退職', '17休'}
+            PURE_HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆防', '☆デ', '◆', '○', '出/☆', '退職'}
             CONDITIONAL_HOLIDAY_SYMS = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
             
             for s in self.staff_list:
@@ -189,7 +189,7 @@ class DayScheduler:
                 is_working_day = False
                 if is_night_today or is_ake_today:
                     is_working_day = True
-                elif req_symbol and req_symbol not in PURE_HOLIDAY_SYMS and req_symbol not in CONDITIONAL_HOLIDAY_SYMS and req_symbol != '休':
+                elif req_symbol and req_symbol not in PURE_HOLIDAY_SYMS and req_symbol not in CONDITIONAL_HOLIDAY_SYMS and req_symbol not in ['休', '休(仮)']:
                     is_working_day = True # Normal working requests
                 elif req_symbol in CONDITIONAL_HOLIDAY_SYMS:
                     is_jan = (d.month == 1 and d.day in [1, 2, 3])
@@ -304,6 +304,7 @@ class DayScheduler:
         # 休暇判定ロジックを共通化
         def is_any_holiday(sym):
             if not sym: return False
+            if sym in ['17休', '休(仮)']: return False # 17時以降休みや仮の休みは日勤可能とみなす
             if sym in {'○', '出/☆'}: return True
             if any(sym.startswith(p) for p in ['☆', '★', '◆']): return True
             if any(p in sym for p in ['休', '育', '退職']): return True
@@ -408,6 +409,8 @@ class DayScheduler:
         for s in self.staff_list:
             if s.status != '在籍':
                 continue
+                
+            is_night_today = night_map.get((s.id, current_date))
             
             # Calculate unavoidable future consecutive work days due to Night/Ake/Requests
             forced_future = 0
@@ -420,7 +423,7 @@ class DayScheduler:
                 
                 is_working_req = False
                 req_symbol = req_map.get((s.id, check_d))
-                if req_symbol and req_symbol not in ['休', '○', '★', '★連', '☆', '☆小', '☆デ', '◆', '退職', '17休']:
+                if req_symbol and req_symbol not in ['休', '休(仮)', '○', '★', '★連', '☆', '☆小', '☆デ', '◆', '退職']:
                     # If there's a request and it's not a holiday, it's a forced working day
                     if req_symbol in CONDITIONAL_HOLIDAY_SYMS:
                         is_jan = (check_d.month == 1 and check_d.day in [1, 2, 3])
@@ -440,11 +443,11 @@ class DayScheduler:
             
             if c_days >= 6 or (c_days + 1 + forced_future > 6):
                 p_req_check = req_map.get((s.id, current_date))
-                if p_req_check is None:
-                    # 予定申請がない場合のみ強制休暇
+                if p_req_check is None and not is_night_today:
+                    # 予定申請がなく、夜勤でもない場合のみ強制休暇
                     forced_holidays.append(DayAssignment(date=current_date, staff_id=s.id, location_code='休', rank=SkillRank.NONE))
                     continue
-                # 予定申請がある場合は連勤制限を適用せず、予定申請を優先する
+                # 予定申請や夜勤がある場合は連勤制限を適用せず、現状を維持する（休夜などの回避）
                 
             # Check Previous Night (DH-05)
             if night_map.get((s.id, prev_date)):
@@ -454,7 +457,7 @@ class DayScheduler:
             
             # Req 4: Enforce Holiday after Post-Night
             if night_map.get((s.id, two_days_ago)):
-                if p_req is None:
+                if p_req is None and not is_night_today:
                     forced_holidays.append(DayAssignment(date=current_date, staff_id=s.id, location_code='休', rank=SkillRank.NONE))
                     continue
             
@@ -469,6 +472,13 @@ class DayScheduler:
                 
             staff_req_symbol[s.id] = p_req
             available_staff.append(s)
+            
+            if s.id == 'T032' and current_date.day == 19:
+                print(f"DEBUG HOSOYA 19th: added to available_staff, p_req={p_req}")
+        
+        for fs in forced_holidays:
+            if fs.staff_id == 'T032' and current_date.day == 19:
+                print(f"DEBUG HOSOYA 19th: added to forced_holidays, loc={fs.location_code}")
 
         staff_hpi = {}
         future_dates = [ft for ft in self.dates if ft > current_date]
@@ -667,11 +677,11 @@ class DayScheduler:
                     current_work = total_work_count.get(s.id, 0)
                     diff = current_work - avg_work
                     if diff > 0:
-                        # 平均より多い場合は減点（1日につき4000点に増強し強力に平準化）
-                        base_score -= int(diff * 4000)
+                        # 平均より多い場合は減点（1日につき20000点に増強し強力に平準化）
+                        base_score -= int(diff * 20000)
                     elif diff < 0:
-                        # 平均より少ない場合は加点（1日につき4000点）
-                        base_score += int(abs(diff) * 4000)
+                        # 平均より少ない場合は加点（1日につき20000点）
+                        base_score += int(abs(diff) * 20000)
 
                 # HPI による動的なスコアリング
                 if is_training:
@@ -705,7 +715,7 @@ class DayScheduler:
                     base_score -= 200
 
                 # (4) 希少スキルボーナスの適用（ただし、ペース配分に余裕がある場合のみ強力発動）
-                mri_bonus = 500000 if hpi <= 0.8 else 50000  # HPIが危険ならボーナスを1/10に減衰
+                mri_bonus = 50000  # ボーナスを適正化し、休日を無闇にキャンセルさせない
                 if s.id in self.mri_only_staff and l_code in ['病院MR', 'CLMR', 'M遅']:
                     base_score += mri_bonus
 
@@ -729,13 +739,13 @@ class DayScheduler:
                     _used = total_work_count.get(s.id, 0)
                     over = _used - _budget
                     if over >= 2:
-                        base_score = -90000  # 代休3日以上はほぼ禁止（配置不足10万点に近い拒否）
+                        base_score = -1500000  # 強力な拒否だが、配置不足(500万点)には劣るため最終手段として採用される
                     elif over == 1:
-                        # 代休2日目：強力な拒否を与え、他の代休1日目候補を徹底的に探させる
-                        base_score = -80000 
+                        # 代休1日目到達で強力な拒否
+                        base_score = -1500000 
                     elif over == 0:
-                        # 予算切れ（代休1日目）：配置不足を埋めるために採用
-                        base_score = 15000 
+                        # 予算ちょうど到達：できれば避ける（マイナススコア）
+                        base_score = -200000 
 
 
                 maximization_objective.append(x[s.id, l_code] * base_score)
@@ -765,9 +775,9 @@ class DayScheduler:
                 # Special Monthly Bonus Rule for Ono (T014) and Kawana (T026) -> strictly 6 'ク' assignments
                 if s.id in ['T014', 'T026'] and l_code == 'ク':
                     if count < 6:
-                        # Massive bonus to forcefully pick them for 'ク' until quota hits 6
+                        # 優先配置のためのボーナス（ただし休日キャンセルは引き起こさないレベル）
                         if (s.id, l_code) in x:
-                            maximization_objective.append(x[s.id, l_code] * 500000)
+                            maximization_objective.append(x[s.id, l_code] * 50000)
                     else:
                         # Hard ban once they hit 6
                         if (s.id, l_code) in x:
@@ -788,6 +798,27 @@ class DayScheduler:
             vars_s = [x[s.id, l.code] for l in target_locations if (s.id, l.code) in x]
             if vars_s:
                 model.Add(sum(vars_s) <= 1)
+                
+            # ===== NEW: Soft Constraint for Pre-seeded Holidays ('休(仮)') =====
+            p_req = staff_req_symbol.get(s.id)
+            if p_req == '休(仮)':
+                if vars_s:
+                    is_off = model.NewBoolVar(f'is_off_preseed_{s.id}_{current_date}')
+                    model.Add(is_off + sum(vars_s) <= 1)
+                    
+                    holiday_bonus = 1000000
+                    if total_work_count:
+                        avg_work = sum(total_work_count.values()) / len(total_work_count)
+                        diff = total_work_count.get(s.id, 0) - avg_work
+                        if diff > 0:
+                            holiday_bonus += int(diff * 200000)
+                        elif diff < 0:
+                            holiday_bonus -= int(abs(diff) * 200000)
+                            
+                    maximization_objective.append(is_off * holiday_bonus)
+            # ===================================================================
+
+
                 
             # Check Previous Assignment for Ultra-Late ('超遅') Logic
             # User: "Next Day ideally Off. If Work, next is '入' or 'MG' (Female)"
@@ -816,12 +847,12 @@ class DayScheduler:
         # 場所の重要度に応じてペナルティを調整する。
         # パワーバランス制約(3M)と競合しないよう、2倍程度の控えめな引き上げにとどめる。
         DEFICIT_PENALTIES = {
-            'CT':   200000,  # 2倍: ポ/クへの副作用を最小化しつつCT充足を促進
-            'MG':   150000,  # 1名枠の完全未配置を防ぐ
-            'OP':   150000,
-            '超遅': 150000,
+            'CT':   5500000,
+            'MG':   5000000,
+            'OP':   5000000,
+            '超遅': 5000000,
         }
-        DEFICIT_PENALTY_DEFAULT = 100000
+        DEFICIT_PENALTY_DEFAULT = 5000000
         deficit_vars = []
 
         for loc in target_locations:

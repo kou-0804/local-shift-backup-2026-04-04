@@ -32,7 +32,7 @@ def assign_monthly_off_days(
       - 公休数 = explicit_off + len(blank_days) + 研修枠から変換した日数
       - 代休 = max(0, target_holidays - 公休数)
     """
-    PURE_HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '出/☆', '退職', '17休', '☆育'}
+    PURE_HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '出/☆', '退職', '☆育'}
     CONDITIONAL_HOLIDAY_SYMS = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
     FORCED_WORK_SYMS = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講', '出/(聴)', '出/(発)2', '17業'}
 
@@ -119,8 +119,9 @@ def assign_monthly_off_days(
                 status[dn] = 'off'       # 日曜・祝日（特別割当なし）
             elif existing_loc and existing_loc not in ['休', '○']:
                 status[dn] = 'work'      # 日勤配置あり
-            elif req:
+            elif req and req != '休(仮)':
                 status[dn] = 'work'      # 勤務申請あり
+
             else:
                 status[dn] = 'blank'     # 未割当平日（実質公休）
 
@@ -137,28 +138,19 @@ def assign_monthly_off_days(
             print(f"  (i) {s.id}({getattr(s, 'name', s.id)}): "
                   f"固定公休({explicit_off}日)が目標({target_holidays}日)を超過しています。", flush=True)
 
-        # ── Phase 1: blank日を規定に必要な分だけ '休' に変換 ──────
-        # 変換する blank 日は「既存の off 日から最も遠い日」を優先して均等に分散させる
-        # blank → off は work_count を変えないため 7日窓チェックは常に通過する
-        blanks_to_convert: list = []
-        remaining_blank_pool = list(blank_days)
-
-        while len(blanks_to_convert) < blanks_quota and remaining_blank_pool:
-            dn = _pick_best_day(remaining_blank_pool, status)
-            remaining_blank_pool.remove(dn)
-            blanks_to_convert.append(dn)
-            status[dn] = 'off'  # スコアリング用に即時反映
-
-        for dn in blanks_to_convert:
+        # ── Phase 1: 全 blank 日を '休' に変換して可視化 ──────────
+        # 未割当平日は実質的な公休なので、Excel で空白にせず全て '休' マーカーを付与する。
+        # quota による制限を撤廃し、blank は全件変換してカウントに含める。
+        for dn in blank_days:
             d_obj = date(year, month, dn)
             additional_holidays.append(DayAssignment(
                 date=d_obj, staff_id=s.id, location_code='休', rank=SkillRank.NONE,
             ))
             day_assign_map[(s.id, dn)] = '休'
-        # remaining_blank_pool に残った blank 日は空欄のまま（次フェーズで仕事が割当可能）
 
         # ── Step 3: 公休数・代休数を確定 ──────────────────────────
-        actual_off = explicit_off + len(blanks_to_convert)
+        # 全 blank 日を含めて公休数を計算する（空白セルも実態として公休）
+        actual_off = explicit_off + len(blank_days)
         off_counts[s.id] = actual_off
 
         deficit = target_holidays - actual_off
@@ -198,7 +190,7 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
 
     HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆デ', '◆', '○', '出/☆', '研(聴)', '退職',
                     '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)',
-                    '研(座)', '研(役)', '出/(役)', '17休', '☆育'}
+                    '研(座)', '研(役)', '出/(役)', '☆育'}
     FORCED_WORK_SYMS = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講', '出/(聴)', '17業'}
     UNAVAIL_SYMS = HOLIDAY_SYMS | FORCED_WORK_SYMS | {'夜希', '17業', '17休'}
 
@@ -259,7 +251,7 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
             return False  # 休日は '出' だけなのでクリティカル判定不要
 
         # --- チェック1: グローバル充足率 ---
-        GLOBAL_SAFETY_MARGIN = 3  # 合計出勤可能人数が必要合計+3を下回ったら禁止
+        GLOBAL_SAFETY_MARGIN = 10  # 業務またがりのスキル競合を吸収するため、合計必要人数＋10名のバッファを確保
         total_required = sum(
             loc.get_required_count(weekday)
             for loc in locations
@@ -272,7 +264,13 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
             and _is_available_on(s.id, d)
         )
         if total_others_avail < total_required + GLOBAL_SAFETY_MARGIN:
+            if staff_id == 'T032' and d.day == 19:
+                print(f"DEBUG PRESEED HOSOYA 19th: margin={total_others_avail - total_required} < {GLOBAL_SAFETY_MARGIN}. SKIPPING.")
             return True  # 全体的に人員タイト → この日に☆を入れない
+            
+        if staff_id == 'T032' and d.day == 19:
+            print(f"DEBUG PRESEED HOSOYA 19th: margin={total_others_avail - total_required} >= {GLOBAL_SAFETY_MARGIN}. ALLOWING.")
+
 
         # --- チェック2: 希少スキル枯渇チェック ---
         for loc in locations:
@@ -331,14 +329,27 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
             # この日にこの業務の有資格者で、すでに☆で確定している人数
             already_seeded = skill_seeded_on_day.get((loc.code, d), 0)
 
-            # この業務の出勤可能な全有資格者数（退職・育休・夜勤・明け以外）
+            def _is_available_for_loc(sid, d, loc_code):
+                if night_map.get((sid, d), False): return False
+                if night_map.get((sid, d - timedelta(days=1)), False): return False
+                
+                req = req_map.get((sid, d))
+                if not req: return True
+                
+                if req in HOLIDAY_SYMS: return False
+                
+                # 特定の業務に固定される申請（会議、出張など）は、他業務に入れない
+                if req in {'講', '会議', '全会', '業配', '業出', '勤', '出', '出/講', '出/(聴)'}:
+                    if req != loc_code: return False
+                    
+                return True
+
+            # この業務の出勤可能な全有資格者数（退職・育休・夜勤・明け・他業務固定・予定休を除く実質稼働可能人数）
             total_active_qualified = sum(
                 1 for s in technicians
                 if s.status == '在籍'
                 and _qualifies_for_location(s.id, loc.code)
-                and req_map.get((s.id, d)) not in {'退職', '◆', '☆育'}
-                and not night_map.get((s.id, d), False)
-                and not night_map.get((s.id, d - timedelta(days=1)), False)
+                and _is_available_for_loc(s.id, d, loc.code)
             )
 
             # 自分が☆になった後に残る有資格者
@@ -346,8 +357,8 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
 
             # 重要場所は大きなバッファで保護し、同日に休みが集中するのを防ぐ
             CRITICAL_BUFFER = {
-                '病CT':  4,   # req=6 → threshold=10
-                'CT':    3,   # req=4 → threshold=7
+                '病CT':  4,   # req=5 → threshold=9
+                'CT':    3,   # req=3 → threshold=6
                 '病院MR': 3,  # req=3 → threshold=6
                 'CLMR':  2,   # req=4 → threshold=6
                 'MG':    2,   # req=1 → threshold=3
@@ -456,7 +467,7 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
             preseed_count_on_day[chosen] = preseed_count_on_day.get(chosen, 0) + 1
 
         for d in selected:
-            pre_seeded.append(Request(staff_id=s.id, date=d, symbol='休'))
+            pre_seeded.append(Request(staff_id=s.id, date=d, symbol='休(仮)'))
 
     print(f"  事前公休割り当て: {len(pre_seeded)}件", flush=True)
     return pre_seeded

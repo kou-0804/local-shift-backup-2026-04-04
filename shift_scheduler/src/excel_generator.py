@@ -37,6 +37,9 @@ class ExcelGenerator:
         self.off_counts = off_counts or {}
         self.validation_errors = validation_errors or []
         
+        # 核医学・放射線治療のスタッフIDセット（表示制御用）
+        self.nuc_tx_ids = {t.id for t in technicians if t.note and ('核医学' in t.note or '治療' in t.note)}
+        
         self.days_in_month = calendar.monthrange(year, month)[1]
         
         # ワークブック作成
@@ -236,11 +239,18 @@ class ExcelGenerator:
         
         # 割り当てがない場合、申請を表示
         if not parts:
-            if req_symbol:
+            if req_symbol and req_symbol != '休(仮)':
                 return req_symbol
         
+        # 核医学・治療のスタッフで、システムが付けた「休」を非表示にする
+        # （夜勤・明け・申請休みがある場合はそちらが優先されるため、ここでは純粋な「休」を空欄化する）
+        if tech_id in self.nuc_tx_ids and parts == ['休']:
+            # 申請が休み系（◆, ☆, 17休など）でない場合は、空欄にする
+            if not req_symbol or req_symbol in ['', '夜希', '休(仮)']:
+                return ''
+
         # 「休」が割り当てられていても、予定申請があればそちらを優先表示
-        if parts == ['休'] and req_symbol and req_symbol not in ['', '夜希']:
+        if parts == ['休'] and req_symbol and req_symbol not in ['', '夜希', '休(仮)']:
             return req_symbol
         
         return '/'.join(parts) if parts else ''
