@@ -13,10 +13,11 @@ class SkillLoader:
         df = pd.read_csv(self.file_path, encoding='utf-8-sig')
         skills = {}
         
-        # Valid location columns are those not in the initial metadata columns
-        # In the CSV: 技師ID, 病院MR, ...
-        # So all columns except 技師ID are location codes
-        location_codes = [c for c in df.columns if c != '技師ID']
+        # Valid location columns are those not in the initial metadata columns.
+        # 技師ID および氏名・備考などの非スキル列はスキル場所として扱わない。
+        # （目視確認用に氏名列を一時追加してもスケジューリングに影響しないようにする）
+        META_COLS = {'技師ID', '氏名', '名前', '備考', 'メモ', 'note'}
+        location_codes = [c for c in df.columns if c not in META_COLS]
 
         for _, row in df.iterrows():
             staff_id = str(row['技師ID'])

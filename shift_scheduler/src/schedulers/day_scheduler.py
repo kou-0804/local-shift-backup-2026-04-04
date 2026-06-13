@@ -43,7 +43,34 @@ class DayScheduler:
                         has_other = True
             if has_mri and not has_other:
                 self.mri_only_staff.add(s.id)
-        
+
+        # MRI専門職（放射線技師でない／MRI専従）: 担当回数の公平化対象外
+        # 備考欄に「MRI専門」を含むスタッフを抽出する。
+        self.mri_specialist_ids = {
+            s.id for s in self.staff_list
+            if getattr(s, 'note', '') and 'MRI専門' in s.note
+        }
+
+    def _is_protected_pair(self, staff_id: str, loc_code: str) -> bool:
+        """担当回数の平準化（公平化）の対象外とすべき個別ルールのペアか判定する。
+        これらは意図的な専従・個別指定のため、平準化で崩してはならない。
+        保護リスト:
+          - T001: 病CT専従
+          - T013・T025: クリニック(ク)6回以上の個別指定
+          - T072: 館山専任
+          - MRI専門職: MRI(病院MR/CLMR/M遅)専従
+        """
+        base = self._get_base_location_code(loc_code)
+        if staff_id == 'T001' and base == 'CT':
+            return True
+        if staff_id in ('T013', 'T025') and base == 'ク':
+            return True
+        if staff_id == 'T072' and base == '館山':
+            return True
+        if staff_id in self.mri_specialist_ids and base in ('病院MR', 'CLMR'):
+            return True
+        return False
+
     def _get_base_location_code(self, loc_code: str) -> str:
         """複合・派生シフトコードを基本業務コードに正規化する。
         例: 'ク/17業' -> 'ク', 'ク遅' -> 'ク', 'M遅' -> 'CLMR', '(ア)' -> 'ア'
@@ -472,13 +499,6 @@ class DayScheduler:
                 
             staff_req_symbol[s.id] = p_req
             available_staff.append(s)
-            
-            if s.id == 'T032' and current_date.day == 19:
-                print(f"DEBUG HOSOYA 19th: added to available_staff, p_req={p_req}")
-        
-        for fs in forced_holidays:
-            if fs.staff_id == 'T032' and current_date.day == 19:
-                print(f"DEBUG HOSOYA 19th: added to forced_holidays, loc={fs.location_code}")
 
         staff_hpi = {}
         future_dates = [ft for ft in self.dates if ft > current_date]
@@ -520,6 +540,17 @@ class DayScheduler:
             else:
                 hpi = float(needed)
             staff_hpi[s.id] = hpi
+
+        # ── 場所別の担当回数の平均（公平化の基準値）──
+        # 各業務について、有資格な出勤可能スタッフの「現時点までの担当回数」の平均を出す。
+        # 後段で、この平均を超えて担当している人にペナルティを科し、偏りを是正する。
+        loc_avg = {}
+        for loc in target_locations:
+            bc = self._get_base_location_code(loc.code)
+            quals = [assignment_counts[s.id].get(bc, 0) for s in available_staff
+                     if self.skills.get(s.id, {}).get(loc.code, SkillRank.NONE) > SkillRank.NONE]
+            if quals:
+                loc_avg[loc.code] = sum(quals) / len(quals)
 
         # 3. Create Variables x[staff_id, loc_code]
         x = {}
@@ -750,32 +781,35 @@ class DayScheduler:
 
                 maximization_objective.append(x[s.id, l_code] * base_score)
 
-                # Soft Constraint for Fairness (Equalize Counts)
-                # 正規化したベースコードのカウントを参照することで、ク遅・/17業などを統合して均等化する
+                # ── Soft Constraint: 場所別の担当回数の公平化（相対方式）──
+                # 「同一業務の有資格者の平均担当回数(loc_avg)」を基準に、平均を超えた分
+                # だけペナルティを科す。これにより特定の人にMRI等が偏るのを是正する。
+                # 旧方式（count*500 を base_score-100 でキャップ）はボーナスに埋もれて
+                # 事実上機能していなかったため、相対方式に作り直した。
+                # 正規化ベースコードで集計し、ク遅・/17業 等を本来業務に統合して均等化する。
                 base_l_code = self._get_base_location_code(l_code)
                 count = assignment_counts[s.id].get(base_l_code, 0)
-                # 専従スタッフ（スキルが単一）は公平性ペナルティを免除する。
-                # 累積回数が増えるほど選ばれにくくなる逆効果を防ぐため。
-                is_dedicated = (s.id == 'T001' and l_code == '病CT')
-                # 公平性ペナルティ: ペナルティを base_score-100 でキャップし
-                # 「予算内スタッフ(net≥100)」が「予算超スタッフ(score=1)」より必ず優先されるよう保証
-                # 予算到達スタッフ (at_budget/over_budget) はスコアが固定なので免除
                 # 予算到達・超過スタッフはスコアが既に低いので公平性ペナルティ免除
                 _at_or_over_budget = (workday_budget and total_work_count and
                                       total_work_count.get(s.id, 0) >= workday_budget.get(s.id, 9999))
-                if count > 0 and not is_dedicated and not _at_or_over_budget:
-                    weight = 500
-                    raw_penalty = count * weight
-                    # base_score-100 でキャップ: 予算内スタッフのnet≥100を保証し
-                    # 予算超スタッフ(score=1)に対して必ず優先される
-                    capped_penalty = min(raw_penalty, max(0, base_score - 100))
-                    if capped_penalty > 0:
-                        fairness_penalties.append(x[s.id, l_code] * capped_penalty)
+                # 保護ペア（病CT専従・ク6回ルール・館山専任・MRI専門）は公平化対象外
+                if not self._is_protected_pair(s.id, l_code) and not _at_or_over_budget:
+                    avg_for_loc = loc_avg.get(l_code, count)
+                    excess = count - avg_for_loc
+                    if excess > 0:
+                        # 平均超過1回あたり WEIGHT_FAIR 点を減点。
+                        # 上限を設け、人員不足ペナルティ(500万)より必ず小さく保つことで
+                        # 「公平化のために人員不足を招かない」ことを保証する。
+                        WEIGHT_FAIR = 12000
+                        penalty = min(int(excess * WEIGHT_FAIR), 800000)
+                        fairness_penalties.append(x[s.id, l_code] * penalty)
 
-                # Special Monthly Bonus Rule for Ono (T014) and Kawana (T026) -> strictly 6 'ク' assignments
-                if s.id in ['T014', 'T026'] and l_code == 'ク':
+                # Special Monthly Bonus Rule for Ono (T013) and Kawana (T025) -> strictly 6 'ク' assignments
+                if s.id in ['T013', 'T025'] and l_code == 'ク':
                     if count < 6:
                         # 優先配置のためのボーナス（ただし休日キャンセルは引き起こさないレベル）
+                        # NOTE: greedyのため6回を保証できない（実測で小野5回）。
+                        # 増強(150000)はかえって悪化(4回)したため50000に据置。6回保証は将来の大域最適化マター。
                         if (s.id, l_code) in x:
                             maximization_objective.append(x[s.id, l_code] * 50000)
                     else:
@@ -790,8 +824,8 @@ class DayScheduler:
         # DH-01: One person <= 1 location (for those not already forced)
         
         # Ono / Kawana Special Ban: Cannot both work 'ク' on the same day
-        if ('T014', 'ク') in x and ('T026', 'ク') in x:
-            model.Add(x['T014', 'ク'] + x['T026', 'ク'] <= 1)
+        if ('T013', 'ク') in x and ('T025', 'ク') in x:
+            model.Add(x['T013', 'ク'] + x['T025', 'ク'] <= 1)
             
         ultra_late_next_day_penalties = []
         for s in available_staff:
@@ -891,10 +925,10 @@ class DayScheduler:
                         model.Add(x[s.id, dummy_code] == 0)
 
         # 4.5. Tateyama Special Rule (Tateyama Hospital Assignment)
-        # Endo (T066) is the specialist. Backups: Fukuda(T007), Minowa(T023), Ishii(T024)
+        # Endo (T072) is the specialist. Backups: Fukuda(T006), Minowa(T022), Ishii(T023)
         if '館山' in location_needs:
-            endo_id = 'T066'
-            backups = ['T007', 'T023', 'T024']
+            endo_id = 'T072'
+            backups = ['T006', 'T022', 'T023']
             off_symbols = {'★', '★連', '☆', '☆小', '☆デ', '◆', '出/☆', '研(聴)', '退職', 
                            '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', 
                            '出/(座)', '研(座)', '研(役)', '出/(役)'}

@@ -65,15 +65,19 @@ class NightScheduler:
         # 4. Solve
 
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 60  # 最大60秒（以前は300秒）
-        solver.parameters.random_seed = 42      # 再現性確保
-        solver.parameters.num_workers = 1       # シングルスレッド（完全再現性）
-        # Enable search logging
-        solver.parameters.log_search_progress = True
+        # 再現性確保: 実時間(max_time_in_seconds)はマシン負荷・速度で停止点が変わり
+        # 非決定になる（夜勤がFEASIBLEで打ち切られ毎回別解になっていた）。
+        # 決定的時間(max_deterministic_time)へ切替え、同一入力→同一解を保証する。
+        solver.parameters.max_deterministic_time = 120.0
+        solver.parameters.max_time_in_seconds = 600   # 安全上限（通常は決定的時間で先に停止）
+        solver.parameters.random_seed = 42
+        solver.parameters.num_workers = 1             # シングルスレッド（完全再現性）
+        solver.parameters.log_search_progress = False
 
         status = solver.Solve(model)
-        
-        print(f"Solver Status: {solver.StatusName(status)}")
+
+        print(f"Solver Status: {solver.StatusName(status)} "
+              f"(detTime={solver.ResponseProto().deterministic_time:.1f}, wall={solver.WallTime():.1f}s)")
         
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
             return self._extract_solution(solver, x)

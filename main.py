@@ -264,12 +264,7 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
             and _is_available_on(s.id, d)
         )
         if total_others_avail < total_required + GLOBAL_SAFETY_MARGIN:
-            if staff_id == 'T032' and d.day == 19:
-                print(f"DEBUG PRESEED HOSOYA 19th: margin={total_others_avail - total_required} < {GLOBAL_SAFETY_MARGIN}. SKIPPING.")
             return True  # 全体的に人員タイト → この日に☆を入れない
-            
-        if staff_id == 'T032' and d.day == 19:
-            print(f"DEBUG PRESEED HOSOYA 19th: margin={total_others_avail - total_required} >= {GLOBAL_SAFETY_MARGIN}. ALLOWING.")
 
 
         # --- チェック2: 希少スキル枯渇チェック ---
