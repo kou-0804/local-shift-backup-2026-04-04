@@ -638,12 +638,19 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
     return day_result_list
 
 
-def optimize_holidays_cpsat(day_result_list, technicians, skills, locations, requests,
-                            night_assignments, year: int, month: int, target_holidays: int):
-    """案B: 月全体をCP-SATで再最適化し、代休(公休不足)を数理的に最小化する。
-    既存の日次スロット(場所×必要数)は保ち「誰が埋めるか」を全体最適化。
-    パワーバランス保護: 各スロットのA数・AB数は現状以上、D数は現状以下を保証(rank-floor)。
-    固定枠(夜勤/明け/申請/業配/PET/遅番系/個別ルール)は再配置しない。連勤≤6。
+def optimize_assignments_cpsat(day_result_list, technicians, skills, locations, requests,
+                               night_assignments, year: int, month: int, target_holidays: int):
+    """月全体をCP-SATで再最適化（作り直し版・2026-06-14）。
+    目的: ①ク6回(T013/T025)をハード床で修正 ②場所別担当回数の偏り(CT/ク)を公平化。
+    既存の日次スロット(場所×必要数)は保ち「誰が埋めるか」だけを最適化する。
+
+    ルール維持の二段構え（ルールを全部書き直さない）:
+      - 凍結: 夜勤/明け/申請/業配/PET/遅番系/非業務 + 個別固定(T001病CT・T072館山・MRI専従)。
+      - rank-floor不変条件: 各スロットでA数・AB数≧現状, D数≦現状 → SR-01〜09b・
+        パワーバランス(病CT A2B1CD3, ク A3 等)を入力が合法な限り自動維持。
+    代休は各人 over≦現状 のハード制約で悪化させない。連勤≤6。
+    反映は「解からの再構築」（既存オブジェクト書換でなく新規生成）でバグを根治。
+    採用は status∈{OPTIMAL,FEASIBLE} の時のみ。それ以外は元リストをそのまま返す。
     """
     from ortools.sat.python import cp_model
     from shift_scheduler.src.models.skill import SkillRank
@@ -655,14 +662,22 @@ def optimize_holidays_cpsat(day_result_list, technicians, skills, locations, req
     night_map = {}
     for na in night_assignments:
         night_map[(na.staff_id, na.date)] = True
-    active = [s for s in technicians if s.status == '在籍']
+    active = sorted([s for s in technicians if s.status == '在籍'], key=lambda s: s.id)
     staff_by_id = {s.id: s for s in active}
+    # MRI専従（備考"MRI専門"）: 病院MR/CLMR から動かさない（凍結）
+    mri_spec = {s.id for s in active if getattr(s, 'note', '') and 'MRI専門' in s.note}
+    KU6_IDS = ('T013', 'T025')  # 小野/川名: クリニック月6回のハード床で能動的に修正
+    KU6_TARGET = 6              # クリニック月6回（床）。暴走は公平化目的(含T013/T025)で抑制
     skill_of = lambda sid, l: skills.get(sid, {}).get(l, SkillRank.NONE)
     loc_codes = {l.code for l in locations}
     gender_only = {l.code: l.gender_constraint for l in locations}
     LATE = {'遅番', '超遅', 'ク遅', 'M遅'}
     FORCED = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講', '17業'}
     COND = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
+    # 最適化対象＝可動な日勤場所すべて（ク6達成に必要な入替の自由度を確保するため）。
+    # 凍結する場所（遅番系・特殊・無効）。これら＋個別固定(is_protected)はソルバが触らない。
+    FROZEN_LOCS = LATE | {'館山', '出', 'PICC', '勤務表作成'}
+    OPT_LOCS = {l.code for l in locations if l.code not in FROZEN_LOCS}
 
     def is_pub(d):
         is_jan = (d.month == 1 and d.day in [1, 2, 3])
@@ -675,47 +690,97 @@ def optimize_holidays_cpsat(day_result_list, technicians, skills, locations, req
         return r > SkillRank.NONE
 
     def is_protected(sid, l):
+        # 個別固定ルール → これらのセルは凍結（再配置しない）。
+        # 注: T013/T025 の ク はここでは凍結しない。ク6床で能動的に修正するため
+        #     スロット構成員(可動)として扱い、別途ハード床 Σy[ク]≥6 を課す。
         if sid == 'T001' and l in ('病CT', 'CT'): return True
-        if sid in ('T013', 'T025') and l in ('ク', 'ク遅'): return True
         if sid == 'T072' and l == '館山': return True
+        if sid in mri_spec and l in ('病院MR', 'CLMR'): return True
         return False
 
-    # 現状の実勤務割当 (sid,d)->loc
-    cur = {}
-    for da in day_result_list:
-        if da.date.year == year and da.date.month == month and da.location_code not in ('休', '○'):
-            cur[(da.staff_id, da.date)] = da
+    # 公平化対象 base へのグループ化（CT合=CT+病CT, MRI=病院MR+CLMR, 他は単独）。
+    # 全可動場所を base にまとめて偏りを最小化（モデル化したが目的に無い場所の劣化を防ぐ）。
+    def fair_base(l):
+        if l in ('CT', '病CT'): return 'CT'
+        if l in ('病院MR', 'CLMR'): return 'MRI'
+        if l not in OPT_LOCS:
+            return None
+        return l
+    # base ごとの公平化除外者（個別ルール対象＝床/専従があるため平準化しない）
+    # 注: ク は T013/T025 を除外しない（目的に含めて床6超の山積みを抑制）。
+    #     CT/MRI は専従(T001/MRI専門)を除外（構造的に多く、平準化対象外）。
+    fair_exclude = defaultdict(set, {'CT': {'T001'} | mri_spec, 'MRI': set(mri_spec)})
 
-    # 固定勤務日: 夜勤/明け/強制申請/CONDの平日/遅番系/業配/PET/個別ルール → 再配置しない
+    # 現状の実勤務割当 (sid,d)->loc。休/○含む全エントリも別マップに保持（公休カウント用）。
+    cur = {}
+    loc_full = {}                  # (sid,d)->location_code（休/○含む、'休'優先）
+    for da in day_result_list:
+        if not (da.date.year == year and da.date.month == month):
+            continue
+        key = (da.staff_id, da.date)
+        if da.location_code not in ('休', '○'):
+            cur[key] = da
+        if key not in loc_full or loc_full[key] in ('休', '○'):
+            loc_full[key] = da.location_code
+
+    # 固定(ロック)日 → 再配置しない:
+    #   夜勤/明け、強制勤務申請(FORCED)、半休(出/☆)、平日の研修(COND)、
+    #   休日/公休申請(LOCK_OFF: ★☆◆/休/17休 等＝勤務を入れてはいけない)、
+    #   最適化対象外場所(MRI/ポ/MG/遅番/非業務)・個別固定(is_protected)。
+    LOCK_OFF = {'★', '★連', '☆', '☆小', '☆デ', '◆', '退職', '☆育'}
     def is_fixed_day(sid, d):
         if night_map.get((sid, d)) or night_map.get((sid, d - timedelta(days=1))):
             return True
         sym = req_map.get((sid, d))
         if sym in FORCED:
             return True
+        if sym == '出/☆':          # 半休（午前勤務・午後休0.5）は動かさない
+            return True
         if sym in COND and not is_pub(d):
             return True
+        if sym in LOCK_OFF:        # 申請休（公休）日には勤務を入れない＝上書き防止
+            return True
         da = cur.get((sid, d))
-        if da and (da.location_code in LATE or da.location_code not in loc_codes or is_protected(sid, da.location_code)):
+        if da and (da.location_code not in OPT_LOCS or is_protected(sid, da.location_code)):
             return True
         return False
 
-    # 各人の固定勤務日数（再配置対象外でも勤務としてカウント）
-    fixed_work = {s.id: 0 for s in active}
-    for s in active:
-        for d in days:
-            if is_fixed_day(s.id, d):
-                fixed_work[s.id] += 1
+    _PURE = {'★', '★連', '☆', '☆小', '☆デ', '◆', '退職', '☆育'}
+    def off_contrib(sid, d, locmap):
+        """assign_monthly_off_days と同じ基準で、その日の公休寄与(0/0.5/1)を返す。
+        locmap=(sid,d)->location_code（休/○含む）。任意の割当リストの公休を測れる。"""
+        if night_map.get((sid, d)) or night_map.get((sid, d - timedelta(days=1))):
+            return 0.0                               # 夜勤/明け=勤務
+        sym = req_map.get((sid, d))
+        if sym in FORCED:
+            return 0.0
+        if sym == '出/☆':
+            return 0.5
+        loc = locmap.get((sid, d))
+        if sym in _PURE or sym == '休' or loc == '休':
+            return 1.0
+        if sym in COND:
+            return 1.0 if is_pub(d) else 0.0
+        if is_pub(d) and not (loc and loc not in ('休', '○')):
+            return 1.0
+        if loc and loc not in ('休', '○'):
+            return 0.0                               # 勤務(17休+日勤含む)
+        if sym == '17休':
+            return 1.0                               # 17休単独=公休
+        if sym and sym != '休(仮)':
+            return 0.0                               # その他申請=勤務
+        return 1.0                                   # 空白=実質公休
+    real_off_contrib = lambda sid, d: off_contrib(sid, d, loc_full)
 
     # 再配置対象スロット: (d,L)->現状人数・ランク構成（固定枠の人を除く通常日勤）
     slot = defaultdict(list)  # (d, L) -> [sid]
     for (sid, d), da in cur.items():
         L = da.location_code
-        if L in LATE or L not in loc_codes or is_protected(sid, L):
-            continue
+        if L not in OPT_LOCS or is_protected(sid, L):
+            continue              # CT/病CT/ク 以外は最適化しない（凍結）
         if night_map.get((sid, d)) or night_map.get((sid, d - timedelta(days=1))):
             continue
-        if req_map.get((sid, d)) in FORCED:
+        if is_fixed_day(sid, d):
             continue
         slot[(d, L)].append(sid)
 
@@ -753,12 +818,13 @@ def optimize_holidays_cpsat(day_result_list, technicians, skills, locations, req
     for key, vs in by_person_day.items():
         model.Add(sum(vs) <= 1)
 
-    # 連勤≤6 ＋ 目的(代休最小化)用に work_pd を定義
-    work = {}  # (sid, d) -> bool/expr
+    # 連勤≤6 用の勤務フラグ。固定日は「実際に勤務か」で判定（休日申請=0、半休/勤務=1）。
+    # ※ is_fixed_day には休日申請(LOCK_OFF)も含むため、一律1にすると休日を連勤に数えてしまう。
+    work = {}  # (sid, d) -> 0/1/expr
     for s in active:
         for d in days:
             if is_fixed_day(s.id, d):
-                work[(s.id, d)] = 1
+                work[(s.id, d)] = 0 if real_off_contrib(s.id, d) >= 1.0 else 1
             else:
                 vs = by_person_day.get((s.id, d), [])
                 work[(s.id, d)] = sum(vs) if vs else 0
@@ -768,15 +834,78 @@ def optimize_holidays_cpsat(day_result_list, technicians, skills, locations, req
             window = [work[(s.id, days[i + j])] for j in range(7)]
             model.Add(sum(window) <= 6)
 
-    # 目的: Σ 代休 を最小化。代休_p = max(0, 総勤務 - (日数-目標))
-    over_terms = []
-    work_cap = num_days - target_holidays
+    # ---- 代休(公休不足)を悪化させない: 各人 実公休 ≥ min(目標, 現状公休)（ハード） ----
+    # free日(申請なしの素の平日/休日)のみ可変。実公休を厳密に表現:
+    #   実公休 = Σ_lock real_off_contrib + Σ_free(1 - slot勤務)
+    # baseline実公休 = Σ_lock real_off + (nfree - 現状slot勤務).
+    # 制約 実公休 ≥ T=min(目標, baseline) ⇔ Σ_free slot勤務 ≤ baseline + 現状slot勤務 - T.
+    import math
+    cur_slot_cnt = {s.id: 0 for s in active}       # 現状スロット勤務数(=free日の現状勤務)
+    for (d, L), people in slot.items():
+        for sid in people:
+            cur_slot_cnt[sid] = cur_slot_cnt.get(sid, 0) + 1
     for s in active:
-        total = sum(work[(s.id, d)] for d in days)
-        over = model.NewIntVar(0, num_days, f'over_{s.id}')
-        model.Add(over >= total - work_cap)
-        over_terms.append(over)
-    model.Minimize(sum(over_terms))
+        lock_off = sum(real_off_contrib(s.id, d) for d in days if is_fixed_day(s.id, d))
+        nfree = sum(1 for d in days if not is_fixed_day(s.id, d))
+        baseline_off = lock_off + (nfree - cur_slot_cnt.get(s.id, 0))
+        T = min(target_holidays, baseline_off)     # 現状が構造的代休なら現状を下限に
+        cap = math.floor(baseline_off + cur_slot_cnt.get(s.id, 0) - T)
+        slot_work = [y[(s.id, d, L)] for (d, L) in slot if (s.id, d, L) in y]
+        if slot_work:
+            model.Add(sum(slot_work) <= max(0, cap))
+
+    # ---- ク6回 ハード床（T013小野 / T025川名 ≥ 6）＋ 同日ク禁止 ----
+    # =6固定は同日ク禁止と衝突してINFEASIBLEになるため床(≥6)とし、
+    # 暴走(6超の山積み)は下の公平化目的に T013/T025 を含めることで抑制する。
+    for kid in KU6_IDS:
+        ku_vars = [y[(kid, d, 'ク')] for d in days if (kid, d, 'ク') in y]
+        if ku_vars:
+            model.Add(sum(ku_vars) >= KU6_TARGET)
+    for d in days:
+        a = y.get(('T013', d, 'ク')); b = y.get(('T025', d, 'ク'))
+        if a is not None and b is not None:
+            model.Add(a + b <= 1)
+
+    # ---- 公平化目的: CT合・ク の担当回数の偏り(平均超過分)を最小化 ----
+    # 個別ルール対象(CT→T001/MRI専従, ク→T013/T025)と MRI専従 は除外。
+    cnt_vars = defaultdict(list)                   # (sid,B) -> [y vars]
+    for (sid, d, L), var in y.items():
+        B = fair_base(L)
+        if B is None or sid in mri_spec or sid in fair_exclude.get(B, set()):
+            continue
+        cnt_vars[(sid, B)].append(var)
+    cur_base = defaultdict(int)                     # (sid,B) -> 現状担当数
+    for (d, L), people in slot.items():
+        B = fair_base(L)
+        if B is None:
+            continue
+        for sid in people:
+            if sid in mri_spec or sid in fair_exclude.get(B, set()):
+                continue
+            cur_base[(sid, B)] += 1
+    elig_by_base = defaultdict(set)
+    for (sid, B) in cnt_vars:
+        elig_by_base[B].add(sid)
+    excess_terms = []
+    for B in sorted(elig_by_base):
+        sids = elig_by_base[B]
+        n = len(sids)
+        tot = sum(cur_base.get((sid, B), 0) for sid in sids)
+        tgt = (tot + n - 1) // n if n else 0        # ceil(平均)
+        for sid in sorted(sids):
+            c = sum(cnt_vars[(sid, B)])
+            ex = model.NewIntVar(0, num_days, f'ex_{sid}_{B}')
+            model.Add(ex >= c - tgt)
+            excess_terms.append(ex)
+    # 目的: greedy解からの変更を最小化（＝ク6を満たす最小の入替）。第二目的で公平化を弱く加味。
+    # 全場所モデルでは120秒で公平化を解ききれず悪化するため、まず「ク6を最小撹乱で達成」を主目的に。
+    # 変更コスト: hint(現状)と異なる割当を1とカウント。
+    change_terms = []
+    for (sid, d, L), var in y.items():
+        is_cur = 1 if (cur.get((sid, d)) and cur[(sid, d)].location_code == L) else 0
+        change_terms.append((1 - var) if is_cur else var)
+    W_CHANGE = 100
+    model.Minimize(W_CHANGE * sum(change_terms) + sum(excess_terms))
 
     # 現状解をヒント（悪化させない）
     for (sid, d, L), var in y.items():
@@ -795,19 +924,82 @@ def optimize_holidays_cpsat(day_result_list, technicians, skills, locations, req
         print("  (最適化解なし→貪欲リバランス結果を維持)", flush=True)
         return day_result_list
 
-    # 解を day_result_list に反映: 再配置対象スロットのDayAssignmentを付け替える
-    # 元の (d,L) スロットのDayAssignmentオブジェクトを取り出し、新しい担当者へ割当
-    slot_objs = defaultdict(list)
-    for (sid, d), da in list(cur.items()):
-        L = da.location_code
-        if (d, L) in slot:
-            slot_objs[(d, L)].append(da)
+    # ---- 反映: 「解からの再構築」（既存オブジェクト書換のバグを根治） ----
+    # スロット構成員の元DayAssignmentを id() で識別して破棄し、solver採用者で新規生成。
+    # 凍結セル・他月・休/○ は温存（ただし新規勤務者の旧 休/○ は重複防止のため除去）。
+    member_obj_ids = set()                          # 置換対象＝スロット構成員の元オブジェクト
+    for (d, L), people in slot.items():
+        for sid in people:
+            da = cur.get((sid, d))
+            if da is not None and da.location_code == L:
+                member_obj_ids.add(id(da))
+    chosen_by_slot = {}                             # (d,L) -> [sid]（決定的に sorted）
+    chosen_person_days = set()                      # 新規に勤務する(sid,d)
     for (d, L), cands in cand_by_slot.items():
-        chosen = [s.id for s in cands if solver.Value(y[(s.id, d, L)]) == 1]
-        objs = slot_objs.get((d, L), [])
-        for da, new_sid in zip(objs, chosen):
-            da.staff_id = new_sid
-    return day_result_list
+        chosen = sorted(s.id for s in cands if solver.Value(y[(s.id, d, L)]) == 1)
+        chosen_by_slot[(d, L)] = chosen
+        for sid in chosen:
+            chosen_person_days.add((sid, d))
+
+    new_list = []
+    for da in day_result_list:
+        if not (da.date.year == year and da.date.month == month):
+            new_list.append(da)                     # 他月はそのまま
+            continue
+        if id(da) in member_obj_ids:
+            continue                                # 旧スロット勤務は破棄→下で再生成
+        if da.location_code in ('休', '○') and (da.staff_id, da.date) in chosen_person_days:
+            continue                                # 新規勤務者の旧休/○は除去（重複防止）
+        new_list.append(da)                         # 凍結セル等は温存
+    for (d, L) in sorted(chosen_by_slot, key=lambda k: (k[0], k[1])):
+        for sid in chosen_by_slot[(d, L)]:
+            new_list.append(DayAssignment(
+                date=d, location_code=L, staff_id=sid, rank=skill_of(sid, L)))
+
+    # ---- 採否ゲート: 入力(greedy)と再構築解を同一基準で測り、悪化なら不採用 ----
+    # greedyは非決定的なので「別runのbaseline」でなく「このrunの入力」と比較するのが正しい。
+    def _locmap(rlist):
+        m = {}
+        for da in rlist:
+            if da.date.year == year and da.date.month == month:
+                k = (da.staff_id, da.date)
+                if k not in m or m[k] in ('休', '○'):
+                    m[k] = da.location_code
+        return m
+
+    def _metrics(rlist):
+        lm = _locmap(rlist)
+        daikyu = 0.0
+        for s in active:
+            off = sum(off_contrib(s.id, d, lm) for d in days)
+            if off < target_holidays:
+                daikyu += target_holidays - off
+        ku = {kid: sum(1 for d in days if lm.get((kid, d)) == 'ク') for kid in KU6_IDS}
+        spread = {}
+        for B, exc in (('CT', {'T001'} | mri_spec), ('ク', set())):
+            members = ('CT', '病CT') if B == 'CT' else ('ク',)
+            cnt = defaultdict(int)
+            for (sid, d), L in lm.items():
+                if L in members and sid not in exc and sid not in mri_spec:
+                    cnt[sid] += 1
+            vals = list(cnt.values())
+            spread[B] = (max(vals) - min(vals)) if vals else 0
+        return daikyu, ku, spread
+
+    in_dk, in_ku, in_sp = _metrics(day_result_list)
+    out_dk, out_ku, out_sp = _metrics(new_list)
+    ku6_ok = all(out_ku[k] >= KU6_TARGET for k in KU6_IDS)
+    ku6_in = all(in_ku[k] >= KU6_TARGET for k in KU6_IDS)
+    worse = (out_dk > in_dk + 1e-9 or
+             out_sp['CT'] > in_sp['CT'] or out_sp['ク'] > in_sp['ク'] or
+             (ku6_in and not ku6_ok))
+    print(f"  📊 入力: 代休{in_dk:.1f} ク{in_ku} 幅CT{in_sp['CT']}/ク{in_sp['ク']}", flush=True)
+    print(f"  📊 最適: 代休{out_dk:.1f} ク{out_ku} 幅CT{out_sp['CT']}/ク{out_sp['ク']}", flush=True)
+    if worse:
+        print("  ⛔ 悪化検知 → 最適化を不採用（greedy結果を維持）", flush=True)
+        return day_result_list
+    print("  ✅ 改善/同等 → 最適化を採用", flush=True)
+    return new_list
 
 
 def main():
@@ -973,8 +1165,21 @@ def main():
     )
     print(flush=True)
 
-    # NOTE: CP-SAT全体最適化(optimize_holidays_cpsat)は反映処理にバグがあり個別ルールを
-    # 破壊したため一旦無効化。解からの再構築方式に作り直すまで貪欲リバランサーのみを使用。
+    # ===== Phase 2.6: CP-SAT 全体最適化（ク6修正＋場所別公平化）=====
+    # 反映は「解からの再構築」方式（前回バグの根治）。代休は各人現状以下に固定し悪化させない。
+    print("🧮 CP-SAT全体最適化中（ク6修正＋公平化）...", flush=True)
+    day_result_list = optimize_assignments_cpsat(
+        day_result_list=day_result_list,
+        technicians=technicians,
+        skills=skills,
+        locations=locations,
+        requests=requests_with_preseed,
+        night_assignments=full_night_assignments,
+        year=year,
+        month=month,
+        target_holidays=target_holidays,
+    )
+    print(flush=True)
 
     # ===== 公休付与（規定日数に合わせて '休' を追加） =====
     # requests_with_preseed を渡して pre-seed 済み ☆ を公休としてカウントさせる
