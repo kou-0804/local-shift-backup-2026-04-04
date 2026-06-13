@@ -1051,7 +1051,11 @@ class DayScheduler:
 
         # Solve
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 60
+        # 決定性確保: 探索打ち切りを「実時間」でなく「決定的時間(作業量基準)」にする。
+        # max_time_in_seconds は負荷依存で打ち切り点が毎回変わり別解を生む(再現性なしの真因)。
+        # max_deterministic_time が常に先に binding するよう、実時間は大きめの安全弁に降格。
+        solver.parameters.max_deterministic_time = 30.0   # 再現的な打ち切り(主)
+        solver.parameters.max_time_in_seconds = 300       # 安全弁(暴走防止・通常 binding しない)
         solver.parameters.random_seed = 42      # 再現性確保
         solver.parameters.num_workers = 1       # シングルスレッド（完全再現性）
         status = solver.Solve(model)
