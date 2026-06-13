@@ -107,7 +107,9 @@ def assign_monthly_off_days(
             elif is_ake:
                 status[dn] = 'work'      # 明け = 勤務扱い（公休カウント外）
             elif req in FORCED_WORK_SYMS:
-                status[dn] = 'work'      # 強制勤務
+                status[dn] = 'work'      # 強制勤務（17業含む：日勤あり・夜勤/拘束/遅番なし）
+            elif req == '出/☆':
+                status[dn] = 'half'      # 半休（午前勤務・午後休）= 公休0.5カウント
             elif req in PURE_HOLIDAY_SYMS or req == '休' or existing_loc == '休':
                 status[dn] = 'off'       # 明示的な公休マーカーあり
             elif req in CONDITIONAL_HOLIDAY_SYMS:
@@ -118,7 +120,9 @@ def assign_monthly_off_days(
             elif is_public_off and not (existing_loc and existing_loc not in ['休', '○']):
                 status[dn] = 'off'       # 日曜・祝日（特別割当なし）
             elif existing_loc and existing_loc not in ['休', '○']:
-                status[dn] = 'work'      # 日勤配置あり
+                status[dn] = 'work'      # 日勤配置あり（17休＋日勤=勤務）
+            elif req == '17休':
+                status[dn] = 'off'       # 17休単独（日勤配置なし）= 日勤も休み可 → 公休
             elif req and req != '休(仮)':
                 status[dn] = 'work'      # 勤務申請あり
 
@@ -150,7 +154,9 @@ def assign_monthly_off_days(
 
         # ── Step 3: 公休数・代休数を確定 ──────────────────────────
         # 全 blank 日を含めて公休数を計算する（空白セルも実態として公休）
-        actual_off = explicit_off + len(blank_days)
+        # 半休（出/☆）は 0.5 日としてカウント
+        half_days = [dn for dn, v in status.items() if v == 'half']
+        actual_off = explicit_off + len(blank_days) + 0.5 * len(half_days)
         off_counts[s.id] = actual_off
 
         deficit = target_holidays - actual_off
@@ -528,7 +534,13 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
         return False
 
     def rest_count(sid):
-        return sum(1 for d in all_days if not is_working(sid, d))
+        # 半休(出/☆)は0.5、それ以外の非勤務日は1.0としてカウント（最終カウントと整合）
+        c = 0.0
+        for d in all_days:
+            if is_working(sid, d):
+                continue
+            c += 0.5 if req_map.get((sid, d)) == '出/☆' else 1.0
+        return c
 
     def is_free_weekday(sid, d):
         """O がその平日に日勤を引き受けられるか（空きで、申請・夜勤・明け・翌日夜勤が無い）。"""
