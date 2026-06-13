@@ -490,7 +490,14 @@ class DayScheduler:
             
             if is_any_holiday(p_req):
                 continue
-                
+
+            # 業配/業出: 勤務場所マスタに無い「表示専用の業務配置」（水曜の乳房生検等）。
+            # セルに「業配」と表示し、他業務には流さない（クリニック女性枠の会計とも整合）。
+            # 場所として配置できないため、強制表示割当として確定させる。
+            if p_req in ('業配', '業出'):
+                forced_holidays.append(DayAssignment(date=current_date, staff_id=s.id, location_code=p_req, rank=SkillRank.NONE))
+                continue
+
             # NEW LOGIC: Ishikawa 4th Tuesday PET Assignment
             if s.id == 'T002' and current_date.weekday() == 1 and 22 <= current_date.day <= 28:
                 if not night_map.get((s.id, current_date)):
