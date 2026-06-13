@@ -634,7 +634,179 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     break
     n_under = sum(1 for s in active if rest[s.id] < target_holidays)
     n_over = sum(1 for s in active if rest[s.id] > target_holidays)
-    print(f"  ⚖️ リバランサー: {moves}件移動 → 目標未満{n_under}名 / 超過{n_over}名", flush=True)
+    print(f"  ⚖️ リバランサー(貪欲): {moves}件移動 → 目標未満{n_under}名 / 超過{n_over}名", flush=True)
+    return day_result_list
+
+
+def optimize_holidays_cpsat(day_result_list, technicians, skills, locations, requests,
+                            night_assignments, year: int, month: int, target_holidays: int):
+    """案B: 月全体をCP-SATで再最適化し、代休(公休不足)を数理的に最小化する。
+    既存の日次スロット(場所×必要数)は保ち「誰が埋めるか」を全体最適化。
+    パワーバランス保護: 各スロットのA数・AB数は現状以上、D数は現状以下を保証(rank-floor)。
+    固定枠(夜勤/明け/申請/業配/PET/遅番系/個別ルール)は再配置しない。連勤≤6。
+    """
+    from ortools.sat.python import cp_model
+    from shift_scheduler.src.models.skill import SkillRank
+    from collections import defaultdict
+
+    num_days = calendar.monthrange(year, month)[1]
+    days = [date(year, month, dd) for dd in range(1, num_days + 1)]
+    req_map = {(r.staff_id, r.date): r.symbol for r in requests}
+    night_map = {}
+    for na in night_assignments:
+        night_map[(na.staff_id, na.date)] = True
+    active = [s for s in technicians if s.status == '在籍']
+    staff_by_id = {s.id: s for s in active}
+    skill_of = lambda sid, l: skills.get(sid, {}).get(l, SkillRank.NONE)
+    loc_codes = {l.code for l in locations}
+    gender_only = {l.code: l.gender_constraint for l in locations}
+    LATE = {'遅番', '超遅', 'ク遅', 'M遅'}
+    FORCED = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講', '17業'}
+    COND = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
+
+    def is_pub(d):
+        is_jan = (d.month == 1 and d.day in [1, 2, 3])
+        return is_jan or jpholiday.is_holiday(d) or d.weekday() == 6
+
+    def qualifies(sid, l):
+        r = skill_of(sid, l)
+        if l == 'HB': return r >= SkillRank.A
+        if l in ('ア', '心'): return r >= SkillRank.B
+        return r > SkillRank.NONE
+
+    def is_protected(sid, l):
+        if sid == 'T001' and l in ('病CT', 'CT'): return True
+        if sid in ('T013', 'T025') and l in ('ク', 'ク遅'): return True
+        if sid == 'T072' and l == '館山': return True
+        return False
+
+    # 現状の実勤務割当 (sid,d)->loc
+    cur = {}
+    for da in day_result_list:
+        if da.date.year == year and da.date.month == month and da.location_code not in ('休', '○'):
+            cur[(da.staff_id, da.date)] = da
+
+    # 固定勤務日: 夜勤/明け/強制申請/CONDの平日/遅番系/業配/PET/個別ルール → 再配置しない
+    def is_fixed_day(sid, d):
+        if night_map.get((sid, d)) or night_map.get((sid, d - timedelta(days=1))):
+            return True
+        sym = req_map.get((sid, d))
+        if sym in FORCED:
+            return True
+        if sym in COND and not is_pub(d):
+            return True
+        da = cur.get((sid, d))
+        if da and (da.location_code in LATE or da.location_code not in loc_codes or is_protected(sid, da.location_code)):
+            return True
+        return False
+
+    # 各人の固定勤務日数（再配置対象外でも勤務としてカウント）
+    fixed_work = {s.id: 0 for s in active}
+    for s in active:
+        for d in days:
+            if is_fixed_day(s.id, d):
+                fixed_work[s.id] += 1
+
+    # 再配置対象スロット: (d,L)->現状人数・ランク構成（固定枠の人を除く通常日勤）
+    slot = defaultdict(list)  # (d, L) -> [sid]
+    for (sid, d), da in cur.items():
+        L = da.location_code
+        if L in LATE or L not in loc_codes or is_protected(sid, L):
+            continue
+        if night_map.get((sid, d)) or night_map.get((sid, d - timedelta(days=1))):
+            continue
+        if req_map.get((sid, d)) in FORCED:
+            continue
+        slot[(d, L)].append(sid)
+
+    model = cp_model.CpModel()
+    y = {}  # (sid, d, L) -> bool
+    cand_by_slot = {}
+    for (d, L), people in slot.items():
+        n = len(people)
+        cands = [s for s in active
+                 if qualifies(s.id, L) and not is_fixed_day(s.id, d)
+                 and not (gender_only.get(L) == '女性のみ' and s.gender.value == '男')]
+        cand_by_slot[(d, L)] = cands
+        for s in cands:
+            y[(s.id, d, L)] = model.NewBoolVar(f'y_{s.id}_{d.day}_{L}')
+        # 人数固定
+        model.Add(sum(y[(s.id, d, L)] for s in cands) == n)
+        # rank-floor（質維持）: A数・AB数は現状以上、D数は現状以下
+        cur_A = sum(1 for sid in people if skill_of(sid, L) == SkillRank.A)
+        cur_AB = sum(1 for sid in people if skill_of(sid, L) >= SkillRank.B)
+        cur_D = sum(1 for sid in people if skill_of(sid, L) == SkillRank.D)
+        A_vars = [y[(s.id, d, L)] for s in cands if skill_of(s.id, L) == SkillRank.A]
+        AB_vars = [y[(s.id, d, L)] for s in cands if skill_of(s.id, L) >= SkillRank.B]
+        D_vars = [y[(s.id, d, L)] for s in cands if skill_of(s.id, L) == SkillRank.D]
+        if cur_A > 0 and A_vars:
+            model.Add(sum(A_vars) >= cur_A)
+        if cur_AB > 0 and AB_vars:
+            model.Add(sum(AB_vars) >= cur_AB)
+        if D_vars:
+            model.Add(sum(D_vars) <= cur_D)
+
+    # 1人1日1場所
+    by_person_day = defaultdict(list)
+    for (sid, d, L) in y:
+        by_person_day[(sid, d)].append(y[(sid, d, L)])
+    for key, vs in by_person_day.items():
+        model.Add(sum(vs) <= 1)
+
+    # 連勤≤6 ＋ 目的(代休最小化)用に work_pd を定義
+    work = {}  # (sid, d) -> bool/expr
+    for s in active:
+        for d in days:
+            if is_fixed_day(s.id, d):
+                work[(s.id, d)] = 1
+            else:
+                vs = by_person_day.get((s.id, d), [])
+                work[(s.id, d)] = sum(vs) if vs else 0
+    # 連勤制約: 7日窓で勤務≤6
+    for s in active:
+        for i in range(num_days - 6):
+            window = [work[(s.id, days[i + j])] for j in range(7)]
+            model.Add(sum(window) <= 6)
+
+    # 目的: Σ 代休 を最小化。代休_p = max(0, 総勤務 - (日数-目標))
+    over_terms = []
+    work_cap = num_days - target_holidays
+    for s in active:
+        total = sum(work[(s.id, d)] for d in days)
+        over = model.NewIntVar(0, num_days, f'over_{s.id}')
+        model.Add(over >= total - work_cap)
+        over_terms.append(over)
+    model.Minimize(sum(over_terms))
+
+    # 現状解をヒント（悪化させない）
+    for (sid, d, L), var in y.items():
+        model.AddHint(var, 1 if cur.get((sid, d)) and cur[(sid, d)].location_code == L else 0)
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_deterministic_time = 120.0
+    solver.parameters.max_time_in_seconds = 600
+    solver.parameters.random_seed = 42
+    solver.parameters.num_workers = 1
+    status = solver.Solve(model)
+    print(f"  🧮 CP-SAT全体最適化: {solver.StatusName(status)} "
+          f"(detTime={solver.ResponseProto().deterministic_time:.1f})", flush=True)
+
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        print("  (最適化解なし→貪欲リバランス結果を維持)", flush=True)
+        return day_result_list
+
+    # 解を day_result_list に反映: 再配置対象スロットのDayAssignmentを付け替える
+    # 元の (d,L) スロットのDayAssignmentオブジェクトを取り出し、新しい担当者へ割当
+    slot_objs = defaultdict(list)
+    for (sid, d), da in list(cur.items()):
+        L = da.location_code
+        if (d, L) in slot:
+            slot_objs[(d, L)].append(da)
+    for (d, L), cands in cand_by_slot.items():
+        chosen = [s.id for s in cands if solver.Value(y[(s.id, d, L)]) == 1]
+        objs = slot_objs.get((d, L), [])
+        for da, new_sid in zip(objs, chosen):
+            da.staff_id = new_sid
     return day_result_list
 
 
@@ -800,6 +972,9 @@ def main():
         target_holidays=target_holidays,
     )
     print(flush=True)
+
+    # NOTE: CP-SAT全体最適化(optimize_holidays_cpsat)は反映処理にバグがあり個別ルールを
+    # 破壊したため一旦無効化。解からの再構築方式に作り直すまで貪欲リバランサーのみを使用。
 
     # ===== 公休付与（規定日数に合わせて '休' を追加） =====
     # requests_with_preseed を渡して pre-seed 済み ☆ を公休としてカウントさせる
