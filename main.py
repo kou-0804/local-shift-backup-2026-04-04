@@ -468,6 +468,145 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
     return pre_seeded
 
 
+def rebalance_workload(day_result_list, technicians, skills, locations, requests,
+                       night_assignments, year: int, month: int, target_holidays: int):
+    """後段リバランサー: 過剰休(公休>目標)の人の空き平日に日勤を移し、代休(公休<目標)の人を
+    休ませて、全員を目標公休に近づける。ハード制約(スキル/性別/連勤/個別ルール/パワーバランス簡易)を保つ。
+
+    数学的背景: 公休不足(代休)は容量の限界ではなく「夜勤者が過剰休/日勤専門者が過重」という
+    分配の偏りが主因。過剰休者の空き平日に日勤を移すことで、副作用なく代休と有給消化を同時に減らす。
+    """
+    from shift_scheduler.src.models.skill import SkillRank
+
+    num_days = calendar.monthrange(year, month)[1]
+    all_days = [date(year, month, d) for d in range(1, num_days + 1)]
+    req_map = {(r.staff_id, r.date): r.symbol for r in requests}
+    night_map = {}
+    for na in night_assignments:
+        night_map[(na.staff_id, na.date)] = True
+    active = [s for s in technicians if s.status == '在籍']
+    skill_of = lambda sid, l: skills.get(sid, {}).get(l, SkillRank.NONE)
+
+    FORCED = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講', '17業'}
+    COND = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
+    LATE = {'遅番', '超遅', 'ク遅', 'M遅'}
+    loc_codes = {l.code for l in locations}
+    gender_only = {l.code: l.gender_constraint for l in locations}
+
+    def qualifies(sid, l):
+        r = skill_of(sid, l)
+        if l == 'HB': return r >= SkillRank.A
+        if l in ('ア', '心'): return r >= SkillRank.B
+        return r > SkillRank.NONE
+
+    def is_protected(sid, l):
+        if sid == 'T001' and l in ('病CT', 'CT'): return True
+        if sid in ('T013', 'T025') and l in ('ク', 'ク遅'): return True
+        if sid == 'T072' and l == '館山': return True
+        return False
+
+    def is_pub(d):
+        is_jan = (d.month == 1 and d.day in [1, 2, 3])
+        return is_jan or jpholiday.is_holiday(d) or d.weekday() == 6
+
+    # 実勤務の割当マップ (sid, date) -> DayAssignment（休/○より実業務を優先）
+    assign = {}
+    for da in day_result_list:
+        if da.date.year == year and da.date.month == month:
+            key = (da.staff_id, da.date)
+            if key not in assign or assign[key].location_code in ('休', '○'):
+                assign[key] = da
+
+    def is_working(sid, d):
+        if night_map.get((sid, d)): return True
+        if night_map.get((sid, d - timedelta(days=1))): return True   # 明け
+        da = assign.get((sid, d))
+        if da and da.location_code not in ('休', '○'): return True
+        sym = req_map.get((sid, d))
+        if sym in FORCED: return True
+        if sym in COND and not is_pub(d): return True
+        return False
+
+    def rest_count(sid):
+        return sum(1 for d in all_days if not is_working(sid, d))
+
+    def is_free_weekday(sid, d):
+        """O がその平日に日勤を引き受けられるか（空きで、申請・夜勤・明け・翌日夜勤が無い）。"""
+        if is_pub(d): return False
+        if is_working(sid, d): return False
+        if req_map.get((sid, d)): return False
+        if night_map.get((sid, d)) or night_map.get((sid, d - timedelta(days=1))): return False
+        if night_map.get((sid, d + timedelta(days=1))): return False
+        return True
+
+    def consec_if_work(sid, d):
+        run = 1
+        dd = d - timedelta(days=1)
+        while dd >= all_days[0] and is_working(sid, dd):
+            run += 1; dd -= timedelta(days=1)
+        dd = d + timedelta(days=1)
+        while dd <= all_days[-1] and is_working(sid, dd):
+            run += 1; dd += timedelta(days=1)
+        return run
+
+    rest = {s.id: rest_count(s.id) for s in active}
+    moves = 0
+    changed = True
+    rounds = 0
+    while changed and rounds < 300:
+        changed = False
+        rounds += 1
+        unders = sorted([s for s in active if rest[s.id] < target_holidays], key=lambda s: rest[s.id])
+        overs = [s for s in active if rest[s.id] > target_holidays]
+        if not unders or not overs:
+            break
+        for U in unders:
+            if rest[U.id] >= target_holidays:
+                continue
+            for d in all_days:
+                if rest[U.id] >= target_holidays:
+                    break
+                if is_pub(d):
+                    continue
+                da = assign.get((U.id, d))
+                if not da or da.location_code in ('休', '○'):
+                    continue
+                L = da.location_code
+                if L in LATE or L not in loc_codes:
+                    continue
+                if is_protected(U.id, L):
+                    continue
+                if req_map.get((U.id, d)):
+                    continue
+                if night_map.get((U.id, d)) or night_map.get((U.id, d - timedelta(days=1))):
+                    continue
+                for O in overs:
+                    if rest[O.id] <= target_holidays or O.id == U.id:
+                        continue
+                    if is_protected(O.id, L) or not qualifies(O.id, L):
+                        continue
+                    if skill_of(O.id, L) < skill_of(U.id, L):   # ランク劣化させない（パワーバランス保護）
+                        continue
+                    if gender_only.get(L) == '女性のみ' and O.gender.value == '男':
+                        continue
+                    if not is_free_weekday(O.id, d):
+                        continue
+                    if consec_if_work(O.id, d) > 6:
+                        continue
+                    # 交換実行: U の日勤 L(d) を O へ移す → U は休、O は勤務
+                    da.staff_id = O.id
+                    assign[(O.id, d)] = da
+                    del assign[(U.id, d)]
+                    rest[U.id] += 1
+                    rest[O.id] -= 1
+                    moves += 1
+                    changed = True
+                    break
+    n_under = sum(1 for s in active if rest[s.id] < target_holidays)
+    n_over = sum(1 for s in active if rest[s.id] > target_holidays)
+    print(f"  ⚖️ リバランサー: {moves}件移動 → 目標未満{n_under}名 / 超過{n_over}名", flush=True)
+    return day_result_list
+
 
 def main():
     parser = argparse.ArgumentParser(description='勤務表自動作成システム')
@@ -615,6 +754,21 @@ def main():
     )
     day_result_list, daily_location_needs = day_scheduler.schedule(requests_with_preseed, full_night_assignments)
     print(f"  日勤配置数: {len(day_result_list)}件", flush=True)
+    print(flush=True)
+
+    # ===== Phase 2.5: 勤務平均化リバランサー（過剰休↔代休者の日勤交換）=====
+    print("⚖️ 勤務平均化リバランス中...", flush=True)
+    day_result_list = rebalance_workload(
+        day_result_list=day_result_list,
+        technicians=technicians,
+        skills=skills,
+        locations=locations,
+        requests=requests_with_preseed,
+        night_assignments=full_night_assignments,
+        year=year,
+        month=month,
+        target_holidays=target_holidays,
+    )
     print(flush=True)
 
     # ===== 公休付与（規定日数に合わせて '休' を追加） =====
