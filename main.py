@@ -523,6 +523,13 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
             if key not in assign or assign[key].location_code in ('休', '○'):
                 assign[key] = da
 
+    # 業務別ロスター: (date, loc_code) -> その日その業務に入っているsid集合（質の維持判定に使う）
+    from collections import defaultdict
+    loc_roster = defaultdict(set)
+    for (sid, dd), da in assign.items():
+        if da.location_code not in ('休', '○'):
+            loc_roster[(dd, da.location_code)].add(sid)
+
     def is_working(sid, d):
         if night_map.get((sid, d)): return True
         if night_map.get((sid, d - timedelta(days=1))): return True   # 明け
@@ -597,8 +604,17 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                         continue
                     if is_protected(O.id, L) or not qualifies(O.id, L):
                         continue
-                    if skill_of(O.id, L) < skill_of(U.id, L):   # ランク劣化させない（パワーバランス保護）
-                        continue
+                    # ランク完全一致は厳しすぎる（専門職が休めない）。人間的判断で緩和:
+                    # U が Aランクでも、交代後その業務にもう1人A評価が残るなら低ランクへ委譲可（質維持）
+                    if skill_of(U.id, L) == SkillRank.A and skill_of(O.id, L) != SkillRank.A:
+                        if sum(1 for sid in loc_roster[(d, L)]
+                               if sid != U.id and skill_of(sid, L) == SkillRank.A) < 1:
+                            continue
+                    # Dランク単独化を防ぐ（交代後にDより上が1人以上残ること）
+                    if skill_of(O.id, L) == SkillRank.D:
+                        if sum(1 for sid in loc_roster[(d, L)]
+                               if sid != U.id and skill_of(sid, L).value > SkillRank.D.value) < 1:
+                            continue
                     if gender_only.get(L) == '女性のみ' and O.gender.value == '男':
                         continue
                     if not is_free_weekday(O.id, d):
@@ -609,6 +625,8 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     da.staff_id = O.id
                     assign[(O.id, d)] = da
                     del assign[(U.id, d)]
+                    loc_roster[(d, L)].discard(U.id)
+                    loc_roster[(d, L)].add(O.id)
                     rest[U.id] += 1
                     rest[O.id] -= 1
                     moves += 1
