@@ -587,14 +587,16 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
         return run
 
     rest = {s.id: rest_count(s.id) for s in active}
+    # ローテ実働要員のみ（別部門/育休/新人/MRI専門は over も under も対象外＝触らない）
+    rotation = [s for s in active if _in_rotation(s, rest[s.id], num_days)]
     moves = 0
     changed = True
     rounds = 0
     while changed and rounds < 300:
         changed = False
         rounds += 1
-        unders = sorted([s for s in active if rest[s.id] < target_holidays], key=lambda s: rest[s.id])
-        overs = [s for s in active if rest[s.id] > target_holidays]
+        unders = sorted([s for s in rotation if rest[s.id] < target_holidays], key=lambda s: rest[s.id])
+        overs = [s for s in rotation if rest[s.id] > target_holidays]
         if not unders or not overs:
             break
         for U in unders:
