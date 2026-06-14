@@ -492,6 +492,21 @@ def _in_rotation(staff, rest_val, num_days, long_leave_slack: int = 10):
     return True
 
 
+def _coexistence_report(rest_map, target):
+    """代休(公休<目標)と余剰(公休>目標)の併存状況を集計（ローテ要員の rest_map を渡す）。"""
+    unders = {k: v for k, v in rest_map.items() if v < target}
+    overs = {k: v for k, v in rest_map.items() if v > target}
+    daikyu = sum(target - v for v in unders.values())
+    surplus = sum(v - target for v in overs.values())
+    return {
+        "n_under": len(unders),
+        "n_over": len(overs),
+        "daikyu_days": round(daikyu, 2),
+        "surplus_days": round(surplus, 2),
+        "coexists": len(unders) > 0 and len(overs) > 0,
+    }
+
+
 def rebalance_workload(day_result_list, technicians, skills, locations, requests,
                        night_assignments, year: int, month: int, target_holidays: int):
     """後段リバランサー: 過剰休(公休>目標)の人の空き平日に日勤を移し、代休(公休<目標)の人を
@@ -650,9 +665,18 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     moves += 1
                     changed = True
                     break
-    n_under = sum(1 for s in active if rest[s.id] < target_holidays)
-    n_over = sum(1 for s in active if rest[s.id] > target_holidays)
-    print(f"  ⚖️ リバランサー(貪欲): {moves}件移動 → 目標未満{n_under}名 / 超過{n_over}名", flush=True)
+    # 別部門/育休/新人/MRI専門は「余剰」として数えない（見かけ値を排除）。ローテ要員のみで併存を測る。
+    rotation = [s for s in active if _in_rotation(s, rest[s.id], num_days)]
+    rot_rest = {s.id: rest[s.id] for s in rotation}
+    rep = _coexistence_report(rot_rest, target_holidays)
+    print(f"  ⚖️ リバランサー(貪欲): {moves}件移動 → ローテ内 代休{rep['n_under']}名({rep['daikyu_days']}日) "
+          f"/ 余剰{rep['n_over']}名({rep['surplus_days']}日)", flush=True)
+    if rep["coexists"]:
+        # 代休と余剰が併存して残った＝これ以上の自動解消が出来なかった。理由を明示する（正直性）。
+        stuck = sorted([s for s in rotation if rest[s.id] < target_holidays], key=lambda s: rest[s.id])
+        for U in stuck:
+            print(f"    ⚠️ 代休残存: {U.name}(公休{rest[U.id]}) — 有資格・空き平日・連勤・性別の"
+                  f"いずれかが噛み合わず肩代わり不能", flush=True)
     return day_result_list
 
 
