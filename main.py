@@ -474,6 +474,24 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
     return pre_seeded
 
 
+def _in_rotation(staff, rest_val, num_days, long_leave_slack: int = 10):
+    """画像診断ローテの実働要員かを判定（リバランサーの over集合・mover から除外する人を弾く）。
+
+    除外: 別部門(核医学/治療) / MRI専門 / 新人(経験1年以下) / 当月ほぼ全休(育休・長期休)。
+    rest_val は当月の公休相当日数（半休0.5込み）。num_days は当月日数。
+    """
+    note = getattr(staff, 'note', '') or ''
+    if '核医学' in note or '治療' in note:
+        return False
+    if 'MRI専門' in note:
+        return False
+    if getattr(staff, 'experience_years', 99) <= 1:
+        return False
+    if rest_val >= num_days - long_leave_slack:   # 育休/長期休: 実勤務がごく僅か
+        return False
+    return True
+
+
 def rebalance_workload(day_result_list, technicians, skills, locations, requests,
                        night_assignments, year: int, month: int, target_holidays: int):
     """後段リバランサー: 過剰休(公休>目標)の人の空き平日に日勤を移し、代休(公休<目標)の人を
