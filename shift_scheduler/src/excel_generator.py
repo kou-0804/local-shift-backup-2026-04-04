@@ -135,15 +135,21 @@ class ExcelGenerator:
             if not hasattr(self, 'stats_columns'):
                 self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '病L', '超遅', 'ク遅', 'M遅', '公休', '代休']
             counts = {label: 0 for label in self.stats_columns}
-            # 全日空白（別部門等で当月はスケジュール対象外）の行は集計を出さない。
-            row_has_content = False
+            # 実勤務（勤務地アサイン）が1件も無い行＝当月スケジュール対象外・全休・育休等は
+            # 集計を出さない（空白セルが全日「休」と数えられ公休=月日数になる無意味な値を避ける）。
+            # 勤務地コード = 撮影部の業務 + 外部部門(PET/RI/放治/TV/館山)。
+            # 休・☆・育休・出・講・全会・研 等は勤務地アサインに含めない。
+            WORK_LOCATION_CODES = {
+                '病院MR', 'CLMR', 'CT', '病CT', 'ア', '心', 'ク', 'クL', 'ポ', '精',
+                'MG', 'DR', 'HB', 'OP', 'PICC', '入', '病L', '超遅', 'ク遅', 'M遅',
+                '館山', 'TV', 'PET', 'RI', '放治',
+            }
+            row_has_work = False
 
             # 各日の配置
             for day in range(1, self.days_in_month + 1):
                 col = self._day_to_column(day)
                 cell_value = self._get_assignment_text(tech.id, day)
-                if cell_value and cell_value.strip():
-                    row_has_content = True
                 self.ws[f'{col}{row}'] = cell_value
                 self.ws[f'{col}{row}'].alignment = Alignment(horizontal='center')
                 
@@ -170,6 +176,8 @@ class ExcelGenerator:
                         p = p[:-3]
                     if p.endswith('夜'):
                         p = p[:-1]
+                    if p in WORK_LOCATION_CODES:
+                        row_has_work = True
                     if p == 'クL':   # クL(クリニックリーダー)はクの内数として集計
                         p = 'ク'
                     if p in counts:
@@ -179,9 +187,9 @@ class ExcelGenerator:
             counts['公休'] = self.off_counts.get(tech.id, 0)
             counts['代休'] = self.daikyu_counts.get(tech.id, 0)
             
-            # 統計出力（全日空白の未スケジュール行は、空白セルが全日「休」と数えられ
-            # 公休=月日数 等の無意味な値になるため、集計列を出さず空欄のままにする）
-            if row_has_content:
+            # 統計出力（実勤務が無い行は、空白セルが全日「休」と数えられ公休=月日数 等の
+            # 無意味な値になるため、集計列を出さず空欄のままにする）
+            if row_has_work:
                 stats_start_col = self.days_in_month + 3
                 for i, label in enumerate(self.stats_columns):
                     col_idx = stats_start_col + i
