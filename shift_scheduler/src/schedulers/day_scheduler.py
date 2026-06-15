@@ -1075,12 +1075,20 @@ class DayScheduler:
         # 5.5 CLMR Special Rule (SR-CLMR)
         l_code = 'CLMR'
         if l_code in [loc.code for loc in target_locations]:
+            # CLMR(クリニックMRI)のランク要件は、M遅(クリニックMRI遅番)の担当者も
+            # 1名としてカウントする。クリニックMRIは M遅 が勤務に含まれるため。
+            # ランク判定は本人のCLMR技能ランクで統一する（M遅担当でもCLMRランクで数える）。
+            # 注: 同一人物が CLMR と M遅 の両候補変数を持ち得るが、1日1アサインのため
+            #     解では高々どちらか一方のみ 1 となり二重計上は起きない。
             v_s = [(s, x[s.id, l_code]) for s in available_staff if (s.id, l_code) in x]
+            v_s += [(s, x[s.id, 'M遅']) for s in available_staff if (s.id, 'M遅') in x]
             if v_s:
-                a_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= SkillRank.A]
-                ab_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= SkillRank.B]
-                d_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) == SkillRank.D]
-                c_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) == SkillRank.C]
+                def _clmr_rank(st):
+                    return self.skills.get(st.id, {}).get('CLMR', SkillRank.NONE)
+                a_vars = [v for s, v in v_s if _clmr_rank(s) >= SkillRank.A]
+                ab_vars = [v for s, v in v_s if _clmr_rank(s) >= SkillRank.B]
+                d_vars = [v for s, v in v_s if _clmr_rank(s) == SkillRank.D]
+                c_vars = [v for s, v in v_s if _clmr_rank(s) == SkillRank.C]
 
                 # 注意: 要求数 > available数 の場合は充足可能な数までキャップする
                 # → モデルがINFEASIBLEになって全配置0になるのを防ぐ
