@@ -71,6 +71,29 @@ class DayScheduler:
             return True
         return False
 
+    # 近接クラスタ回避の対象業務（希少＋手当）。
+    # CT/ク等の高ボリューム業務や専従(病CT専従/MRI専門/PET/RI/放治/館山)は対象外。
+    PROXIMITY_DUTIES = ('HB', 'DR', 'ア', 'ポ', '超遅', 'ク遅', 'M遅', 'OP')
+
+    def _proximity_penalty(self, staff_id, l_code, assignment_history):
+        """同一業務の近接クラスタに対する段階的ソフト減点（負値）を返す。
+
+        前日(連続)=強 / 中1日(2日前)=弱 / 中2日(3日前)=微弱 / 中3日以上=なし。
+        最も直近の occurrence を1つだけ採用し多重加算しない。
+        減点幅は配置不足(500万)・SR人数下限(300万)より必ず小さく保ち、
+        他に担当者がいない日は連続を許容してカバレッジを死守する（ソフト制約）。
+        """
+        if l_code not in self.PROXIMITY_DUTIES or not assignment_history:
+            return 0
+        h = assignment_history
+        if len(h) >= 1 and h[-1].get(staff_id) == l_code:
+            return -120000   # 前日（連続）
+        if len(h) >= 2 and h[-2].get(staff_id) == l_code:
+            return -30000    # 中1日（2日前に担当）
+        if len(h) >= 3 and h[-3].get(staff_id) == l_code:
+            return -12000    # 中2日（3日前に担当）
+        return 0
+
     def _get_base_location_code(self, loc_code: str) -> str:
         """複合・派生シフトコードを基本業務コードに正規化する。
         例: 'ク/17業' -> 'ク', 'ク遅' -> 'ク', 'M遅' -> 'CLMR', '(ア)' -> 'ア'
@@ -679,12 +702,19 @@ class DayScheduler:
                         continue
                     if s_skills[l_code] in [SkillRank.NONE, '-', '']:
                         continue
-                # HB: Aランク必須
                 # 以下のランクチェックはダミー枠には適用しない
                 if not (l_code.startswith('(') and l_code.endswith(')')):
-                    # HB: Aランク必須
-                    if l_code == 'HB' and rank < SkillRank.A:
-                        continue
+                    # HB: 仕様7.1.2 — Aランク必須は第1金曜(SR-03)・第4木曜(SR-04)のみ。
+                    # それ以外の日は通常ルール（HBスキルB以上で可）。
+                    # 旧実装は全日Aランク必須でAランク6名に候補を固定し、川向等への
+                    # 偏り（HB8回）・3連続を招いていた。特殊日のA人数下限(A×2/A×3)は
+                    # SR-03/SR-04 が別途ハード制約として担保するため、ここでの全日A固定は
+                    # 冗長かつ通常日では誤り。通常日をB+に開放しプール6→12名で分散させる。
+                    if l_code == 'HB':
+                        _wk = self._get_week_number(current_date.day)
+                        _hb_requires_A = (weekday == 4 and _wk == 1) or (weekday == 3 and _wk == 4)
+                        if _hb_requires_A and rank < SkillRank.A:
+                            continue
                     # アンギオ: Bランク以上
                     if l_code == 'ア' and rank < SkillRank.B:
                         continue
@@ -783,6 +813,11 @@ class DayScheduler:
                 if l_code in ['HB', 'DR', 'ア']:
                     base_score = max(base_score, 30000)
 
+                # 近接クラスタ回避（希少＋手当業務）: 同一業務を近接した日に固めず分散させる。
+                # 前日(連続)=強, 中1日=弱, 中2日=微弱の段階的ソフト減点。専従/高ボリューム業務は
+                # 対象外。詳細は docs/superpowers/specs/2026-06-16-duty-proximity-clustering-design.md
+                base_score += self._proximity_penalty(s.id, l_code, assignment_history)
+
 
                 # (5) 究極の予算制限とラストリゾート（安全網）
                 if workday_budget and total_work_count:
@@ -845,7 +880,18 @@ class DayScheduler:
                         if excess > 0:
                             # 平均超過1回あたり減点。上限は人員不足ペナルティ(500万)より
                             # 必ず小さく保ち、「公平化のために人員不足を招かない」を保証する。
-                            penalty = min(int(excess * WEIGHT_FAIR), 800000)
+                            #
+                            # 希少1枠業務(HB/DR/ア)は有資格者が多い(HBは12名)割に特定者へ
+                            # 積み増りやすい。超過減点を強化して有資格者全員へ広く分散させる。
+                            # これは超過者を「押し出す」だけで総勤務日数は増えないため、不足側の
+                            # 容量ゲートと違い代休に影響しない。
+                            # 希少1枠業務(HB/DR/ア)は強めに分散。ク等の高ボリューム業務へ
+                            # 同種の強い超過減点を掛けると、汎用技師(川向)が押し出された分が
+                            # HBへ流れHB3連続が復活する（総勤務が保存されるためのトレードオフ）。
+                            # よって強化は希少1枠業務に限定する。
+                            _w_ex = 60000 if l_code in ('HB', 'DR', 'ア') else WEIGHT_FAIR
+                            _cap_ex = 1200000 if l_code in ('HB', 'DR', 'ア') else 800000
+                            penalty = min(int(excess * _w_ex), _cap_ex)
                             fairness_penalties.append(x[s.id, l_code] * penalty)
                         elif excess < 0:
                             # 平均未満は加点して引き込む。特に0回者には固定加点(+30000)を上乗せし

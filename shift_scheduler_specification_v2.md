@@ -605,7 +605,7 @@ def get_angio_constraint(weekday: int, week_of_month: int) -> dict:
 |------|------|------------|------|
 | 第1金曜日 | 2 | **Aランク2名** | - |
 | 第4木曜日 | 3 | **Aランク3名** | - |
-| 通常木曜日 | 2 | 通常ルール | - |
+| 通常木曜日 | 1 | 通常ルール | その他と同じ（1名・A不問） |
 | その他 | 1 | 通常ルール | - |
 
 ```python
@@ -615,8 +615,8 @@ def get_hb_constraint(weekday: int, week_of_month: int) -> dict:
         return {'total': 2, 'min_A': 2}
     elif weekday == 3 and week_of_month == 4:  # 第4木曜日
         return {'total': 3, 'min_A': 3}
-    elif weekday == 3:  # 通常木曜日
-        return {'total': 2, 'min_A': 0}
+    elif weekday == 3:  # 通常木曜日（その他と同じ：1名・A不問）
+        return {'total': 1, 'min_A': 0}
     else:
         return {'total': 1, 'min_A': 0}
 ```
