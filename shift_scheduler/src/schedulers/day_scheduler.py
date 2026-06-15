@@ -803,7 +803,20 @@ class DayScheduler:
                 if not self._is_protected_pair(s.id, l_code) and not _at_or_over_budget:
                     avg_for_loc = loc_avg.get(l_code, count)
                     excess = count - avg_for_loc
-                    if excess > 0:
+                    # 手当業務(超遅・ポ)は「両側公平化」を最優先。重みをク6ボーナス(50000)より
+                    # 強くし、平均超過は強く減点・平均未満(特に0回)へは強く誘導する。手当の
+                    # 「やる人/やらない人」差を最小化する狙い。上限は人員不足(500万)より必ず小さく保つ。
+                    if l_code in ('超遅', 'ポ'):
+                        WEIGHT_PAID = 60000
+                        if excess > 0:
+                            penalty = min(int(excess * WEIGHT_PAID), 1500000)
+                            fairness_penalties.append(x[s.id, l_code] * penalty)
+                        elif count < avg_for_loc:
+                            deficit = avg_for_loc - count
+                            # 0回者には追加ボーナスで最優先（手当ゼロを潰す）
+                            bonus = min(int(deficit * WEIGHT_PAID) + (100000 if count == 0 else 0), 1500000)
+                            maximization_objective.append(x[s.id, l_code] * bonus)
+                    elif excess > 0:
                         # 平均超過1回あたり WEIGHT_FAIR 点を減点。
                         # 上限を設け、人員不足ペナルティ(500万)より必ず小さく保つことで
                         # 「公平化のために人員不足を招かない」ことを保証する。
