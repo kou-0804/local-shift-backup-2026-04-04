@@ -531,7 +531,18 @@ class DayScheduler:
                 if not night_map.get((s.id, current_date)):
                     forced_holidays.append(DayAssignment(date=current_date, staff_id=s.id, location_code='PET', rank=SkillRank.NONE))
                     continue
-                
+
+            # 箕輪(T022): 月曜は DX として確保し、勤務地に振らない。
+            # 祝日(ハッピーマンデー含む)・1/1〜3・本人の休み希望は DX より優先（休み希望は
+            # 上の is_any_holiday(p_req) で既に continue 済み）。当日夜勤がある月曜は夜勤を優先。
+            # DX は勤務日扱い（公休・代休にはカウントされず、連勤カウントには含まれる）。
+            if (s.id == 'T022' and current_date.weekday() == 0
+                    and not jpholiday.is_holiday(current_date)
+                    and not (current_date.month == 1 and current_date.day in [1, 2, 3])):
+                if not night_map.get((s.id, current_date)):
+                    forced_holidays.append(DayAssignment(date=current_date, staff_id=s.id, location_code='DX', rank=SkillRank.NONE))
+                    continue
+
             staff_req_symbol[s.id] = p_req
             available_staff.append(s)
 

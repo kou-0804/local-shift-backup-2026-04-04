@@ -142,7 +142,7 @@ class ExcelGenerator:
             WORK_LOCATION_CODES = {
                 '病院MR', 'CLMR', 'CT', '病CT', 'ア', '心', 'ク', 'クL', 'ポ', '精',
                 'MG', 'DR', 'HB', 'OP', 'PICC', '入', '病L', '超遅', 'ク遅', 'M遅',
-                '館山', 'TV', 'PET', 'RI', '放治',
+                '館山', 'TV', 'PET', 'RI', '放治', 'DX',
             }
             row_has_work = False
 
