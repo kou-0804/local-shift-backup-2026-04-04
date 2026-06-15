@@ -1369,12 +1369,17 @@ def main():
     from shift_scheduler.src.models.skill import SkillRank as _SR
     _staff_by_id = {t.id: t for t in technicians}
     def _can_lead_clinic(sid):
+        # スキルマスタの「クL」列を権威とする（運用者が個別に資格を管理）。
+        # クL列が無いデータでは従来ルール(3年目以降・女性・ク有資格)に自動フォールバック。
+        ssk = skills.get(sid, {})
+        if 'クL' in ssk:
+            return ssk.get('クL', _SR.NONE) > _SR.NONE
         t = _staff_by_id.get(sid)
         if not t or t.gender.value != '女':
             return False
         if int(t.experience_years) < 3:
             return False
-        return skills.get(sid, {}).get('ク', _SR.NONE) > _SR.NONE
+        return ssk.get('ク', _SR.NONE) > _SR.NONE
     _kl_counts = {}
     _kl_days = 0
     for _d in sorted(day_assignments_dict.keys()):
