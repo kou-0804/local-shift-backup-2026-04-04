@@ -151,11 +151,21 @@ class ExcelGenerator:
                 # 統計カウント
                 if '夜' in cell_value:
                     counts['夜勤'] += 1
-                
+
                 # 日勤カウント (cell_value might be "CT", "CT/夜", "入")
                 # Split by '/' if composite
+                # さらに「日勤＋夜勤」が "病CT夜"・"CLMR夜(希)" のようにスラッシュ無しで
+                # 連結されるケースは、末尾の "(希)"・"夜" を剥がして業務名へ正規化してから
+                # 一致させ、日勤業務としても計上する（夜勤列は上の '夜' 判定で別途 +1 済み）。
                 parts = cell_value.split('/')
                 for p in parts:
+                    p = p.strip()
+                    if p.endswith('(希)'):
+                        p = p[:-3]
+                    elif p.endswith('（希）'):
+                        p = p[:-3]
+                    if p.endswith('夜'):
+                        p = p[:-1]
                     if p == 'クL':   # クL(クリニックリーダー)はクの内数として集計
                         p = 'ク'
                     if p in counts:
