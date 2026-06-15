@@ -833,13 +833,40 @@ class DayScheduler:
                             # 0回者には追加ボーナスで最優先（手当ゼロを潰す）
                             bonus = min(int(deficit * WEIGHT_PAID) + (100000 if p_count == 0 else 0), 1500000)
                             maximization_objective.append(x[s.id, l_code] * bonus)
-                    elif excess > 0:
-                        # 平均超過1回あたり WEIGHT_FAIR 点を減点。
-                        # 上限を設け、人員不足ペナルティ(500万)より必ず小さく保つことで
-                        # 「公平化のために人員不足を招かない」ことを保証する。
+                    else:
+                        # 通常勤務地（CT/病CT/CLMR/ク 等）も手当業務と同じ「両側公平化」に統一する。
+                        # 旧実装は平均超過の減点のみで、平均未満(特に0回)の有資格者を引き込む
+                        # 加点が無かった。そのため特定業務に固定された技師（例: クに固定され
+                        # CT系=0 の松井）の「一度も入らない」飢餓が放置されていた。
+                        # 不足側に加点を付け、有資格者を本来業務へ呼び戻す。
+                        # 注: 病CTとCTは _get_base_location_code で同一カウンタ(CT)に統合される
+                        # ため、CT系全体を1プールとして均等化する（病CT専従は超過側で自然に抑制）。
                         WEIGHT_FAIR = 12000
-                        penalty = min(int(excess * WEIGHT_FAIR), 800000)
-                        fairness_penalties.append(x[s.id, l_code] * penalty)
+                        if excess > 0:
+                            # 平均超過1回あたり減点。上限は人員不足ペナルティ(500万)より
+                            # 必ず小さく保ち、「公平化のために人員不足を招かない」を保証する。
+                            penalty = min(int(excess * WEIGHT_FAIR), 800000)
+                            fairness_penalties.append(x[s.id, l_code] * penalty)
+                        elif excess < 0:
+                            # 平均未満は加点して引き込む。特に0回者には固定加点(+30000)を上乗せし
+                            # 「一度も入らない」状態を解消する。ただし配置不足(500万)・出力体制
+                            # スラック(200万〜)・ランク品質より必ず小さく保ち、配置や品質を壊さない。
+                            #
+                            # 【重要】総勤務日数が平均以下＝「余力のある人」に限定して加点する。
+                            # 総勤務が平均超の人にまで場所加点をすると、本来休める日に余分な勤務を
+                            # 引き当てて勤務日数が増え、代休（公休<目標）を誘発する。場所の偏りは
+                            # 是正しつつ総勤務日数バランス（代休回避）を壊さないための条件。
+                            _has_capacity = True
+                            if total_work_count:
+                                _avg_w = sum(total_work_count.values()) / len(total_work_count)
+                                # 平均+1.0 までは余力ありとみなす。完全に平均以下に限ると
+                                # 高稼働の技師(例:松井)が一度も本来業務に入れず飢餓が残るため、
+                                # 1日分の緩衝を許容し、生じた端数代休はリバランサーで回収させる。
+                                _has_capacity = total_work_count.get(s.id, 0) <= _avg_w + 1.0
+                            if _has_capacity:
+                                deficit = avg_for_loc - count
+                                bonus = min(int(deficit * WEIGHT_FAIR) + (30000 if count == 0 else 0), 400000)
+                                maximization_objective.append(x[s.id, l_code] * bonus)
 
                 # Special Monthly Bonus Rule for Ono (T013) and Kawana (T025) -> strictly 6 'ク' assignments
                 if s.id in ['T013', 'T025'] and l_code == 'ク':
