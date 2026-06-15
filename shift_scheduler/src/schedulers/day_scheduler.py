@@ -203,6 +203,11 @@ class DayScheduler:
                 c = assignment_counts[a.staff_id]
                 base_code = self._get_base_location_code(a.location_code)
                 c[base_code] = c.get(base_code, 0) + 1
+                # 手当業務(超遅/ポ/ク遅/M遅)は個別公平化のため raw コードでも別キー集計する。
+                # （ク遅→ク, M遅→CLMR の base統合とは別に、業務そのものの回数を保持）
+                if a.location_code in ('超遅', 'ポ', 'ク遅', 'M遅'):
+                    _rk = '_L_' + a.location_code
+                    c[_rk] = c.get(_rk, 0) + 1
             # Update consecutive work days AND total_work_count
             PURE_HOLIDAY_SYMS = {'★', '★連', '☆', '☆小', '☆防', '☆デ', '◆', '○', '出/☆', '退職'}
             CONDITIONAL_HOLIDAY_SYMS = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
@@ -558,6 +563,14 @@ class DayScheduler:
                      if self.skills.get(s.id, {}).get(loc.code, SkillRank.NONE) > SkillRank.NONE]
             if quals:
                 loc_avg[loc.code] = sum(quals) / len(quals)
+        # 手当業務(超遅/ポ/ク遅/M遅)の raw 平均（base統合せず業務そのものの回数で均等化）
+        loc_avg_raw = {}
+        for _code in ('超遅', 'ポ', 'ク遅', 'M遅'):
+            _rk = '_L_' + _code
+            _q = [assignment_counts[s.id].get(_rk, 0) for s in available_staff
+                  if self.skills.get(s.id, {}).get(_code, SkillRank.NONE) > SkillRank.NONE]
+            if _q:
+                loc_avg_raw[_code] = sum(_q) / len(_q)
 
         # 3. Create Variables x[staff_id, loc_code]
         x = {}
@@ -806,15 +819,19 @@ class DayScheduler:
                     # 手当業務(超遅・ポ)は「両側公平化」を最優先。重みをク6ボーナス(50000)より
                     # 強くし、平均超過は強く減点・平均未満(特に0回)へは強く誘導する。手当の
                     # 「やる人/やらない人」差を最小化する狙い。上限は人員不足(500万)より必ず小さく保つ。
-                    if l_code in ('超遅', 'ポ'):
+                    if l_code in ('超遅', 'ポ', 'ク遅', 'M遅'):
+                        # 手当業務は raw カウント(_L_*)と raw平均で両側公平化（base統合しない）。
+                        # 超遅/ポは raw==base なので従来挙動と同じ。ク遅/M遅はこれで初めて個別に効く。
+                        p_count = assignment_counts[s.id].get('_L_' + l_code, 0)
+                        p_avg = loc_avg_raw.get(l_code, p_count)
                         WEIGHT_PAID = 60000
-                        if excess > 0:
-                            penalty = min(int(excess * WEIGHT_PAID), 1500000)
+                        if p_count > p_avg:
+                            penalty = min(int((p_count - p_avg) * WEIGHT_PAID), 1500000)
                             fairness_penalties.append(x[s.id, l_code] * penalty)
-                        elif count < avg_for_loc:
-                            deficit = avg_for_loc - count
+                        elif p_count < p_avg:
+                            deficit = p_avg - p_count
                             # 0回者には追加ボーナスで最優先（手当ゼロを潰す）
-                            bonus = min(int(deficit * WEIGHT_PAID) + (100000 if count == 0 else 0), 1500000)
+                            bonus = min(int(deficit * WEIGHT_PAID) + (100000 if p_count == 0 else 0), 1500000)
                             maximization_objective.append(x[s.id, l_code] * bonus)
                     elif excess > 0:
                         # 平均超過1回あたり WEIGHT_FAIR 点を減点。
