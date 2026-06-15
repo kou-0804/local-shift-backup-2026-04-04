@@ -156,6 +156,8 @@ class ExcelGenerator:
                 # Split by '/' if composite
                 parts = cell_value.split('/')
                 for p in parts:
+                    if p == 'クL':   # クL(クリニックリーダー)はクの内数として集計
+                        p = 'ク'
                     if p in counts:
                         counts[p] += 1
             

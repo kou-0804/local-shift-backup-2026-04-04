@@ -1363,6 +1363,34 @@ def main():
          for err in validation_errors:
              print(f"    - {err}")
 
+    # ===== クL（クリニックリーダー）表示付与（検証後・表示オーバーレイ）=====
+    # その日のク担当者から有資格者1名を「クL」表示にする。資格=3年目以降・女性・ク有資格。
+    # クL回数が最小の人を選ぶ輪番で負担を均等化（同数は技師IDで決定的）。クはそのまま1カウント。
+    from shift_scheduler.src.models.skill import SkillRank as _SR
+    _staff_by_id = {t.id: t for t in technicians}
+    def _can_lead_clinic(sid):
+        t = _staff_by_id.get(sid)
+        if not t or t.gender.value != '女':
+            return False
+        if int(t.experience_years) < 3:
+            return False
+        return skills.get(sid, {}).get('ク', _SR.NONE) > _SR.NONE
+    _kl_counts = {}
+    _kl_days = 0
+    for _d in sorted(day_assignments_dict.keys()):
+        _ku = day_assignments_dict[_d].get('ク', [])
+        _elig = [sid for sid in _ku if _can_lead_clinic(sid)]
+        if not _elig:
+            continue
+        _leader = min(_elig, key=lambda s: (_kl_counts.get(s, 0), s))
+        day_assignments_dict[_d]['ク'].remove(_leader)
+        if not day_assignments_dict[_d]['ク']:
+            del day_assignments_dict[_d]['ク']
+        day_assignments_dict[_d].setdefault('クL', []).append(_leader)
+        _kl_counts[_leader] = _kl_counts.get(_leader, 0) + 1
+        _kl_days += 1
+    print(f"  👑 クL付与: {_kl_days}日に指定 (対象{len(_kl_counts)}名 / 回数分布{sorted(_kl_counts.values(), reverse=True)})", flush=True)
+
     # Excel出力
     print("📊 Excel生成中...", flush=True)
     os.makedirs(args.output_dir, exist_ok=True)
