@@ -1080,7 +1080,8 @@ class DayScheduler:
                 a_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= SkillRank.A]
                 ab_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) >= SkillRank.B]
                 d_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) == SkillRank.D]
-                
+                c_vars = [v for s, v in v_s if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) == SkillRank.C]
+
                 # 注意: 要求数 > available数 の場合は充足可能な数までキャップする
                 # → モデルがINFEASIBLEになって全配置0になるのを防ぐ
                 def _safe_min(req: int, pool: list) -> int:
@@ -1095,7 +1096,9 @@ class DayScheduler:
                 if weekday == 2:  # 水曜
                     _add_soft_min(3, a_vars,  f'clmr_a_slack_{current_date.day}')
                     _add_soft_min(4, ab_vars, f'clmr_ab_slack_{current_date.day}')
+                    # 仕様7.1.5: 水曜CLMRは C・D 完全禁止（A/Bランクのみで構成）
                     if d_vars: model.Add(sum(d_vars) == 0) # D禁止
+                    if c_vars: model.Add(sum(c_vars) == 0) # C禁止
                 elif weekday == 4:  # 金曜
                     _add_soft_min(2, a_vars,  f'clmr_a_slack_{current_date.day}')
                     _add_soft_min(4, ab_vars, f'clmr_ab_slack_{current_date.day}')
