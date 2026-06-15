@@ -135,11 +135,15 @@ class ExcelGenerator:
             if not hasattr(self, 'stats_columns'):
                 self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '病L', '超遅', 'ク遅', 'M遅', '公休', '代休']
             counts = {label: 0 for label in self.stats_columns}
-            
+            # 全日空白（別部門等で当月はスケジュール対象外）の行は集計を出さない。
+            row_has_content = False
+
             # 各日の配置
             for day in range(1, self.days_in_month + 1):
                 col = self._day_to_column(day)
                 cell_value = self._get_assignment_text(tech.id, day)
+                if cell_value and cell_value.strip():
+                    row_has_content = True
                 self.ws[f'{col}{row}'] = cell_value
                 self.ws[f'{col}{row}'].alignment = Alignment(horizontal='center')
                 
@@ -175,13 +179,15 @@ class ExcelGenerator:
             counts['公休'] = self.off_counts.get(tech.id, 0)
             counts['代休'] = self.daikyu_counts.get(tech.id, 0)
             
-            # 統計出力
-            stats_start_col = self.days_in_month + 3
-            for i, label in enumerate(self.stats_columns):
-                col_idx = stats_start_col + i
-                col_letter = openpyxl.utils.get_column_letter(col_idx)
-                self.ws[f'{col_letter}{row}'] = counts[label]
-                self.ws[f'{col_letter}{row}'].alignment = Alignment(horizontal='center')
+            # 統計出力（全日空白の未スケジュール行は、空白セルが全日「休」と数えられ
+            # 公休=月日数 等の無意味な値になるため、集計列を出さず空欄のままにする）
+            if row_has_content:
+                stats_start_col = self.days_in_month + 3
+                for i, label in enumerate(self.stats_columns):
+                    col_idx = stats_start_col + i
+                    col_letter = openpyxl.utils.get_column_letter(col_idx)
+                    self.ws[f'{col_letter}{row}'] = counts[label]
+                    self.ws[f'{col_letter}{row}'].alignment = Alignment(horizontal='center')
 
             row += 1
 
