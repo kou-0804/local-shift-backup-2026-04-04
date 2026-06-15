@@ -665,6 +665,66 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     moves += 1
                     changed = True
                     break
+    # === 最終モップアップ: 主ループが round 上限/順序で取りこぼした「厳密に改善する」交換を回収する。
+    # ドナー O は交代後も target 以上を保つ者のみ（rest[O] >= target+1）＝新規代休を作らない。
+    # under U の代休を解消（U は +0.5 超過まで許容）。各 move は総代休を厳密に減らすので必ず収束する。
+    mop_improved = True
+    while mop_improved:
+        mop_improved = False
+        m_unders = sorted([s for s in active if rest[s.id] < target_holidays], key=lambda s: rest[s.id])
+        if not m_unders:
+            break
+        for U in m_unders:
+            if rest[U.id] >= target_holidays:
+                continue
+            done = False
+            for d in all_days:
+                if done:
+                    break
+                if is_pub(d):
+                    continue
+                da = assign.get((U.id, d))
+                if not da or da.location_code in ('休', '○'):
+                    continue
+                L = da.location_code
+                if L in LATE or L not in loc_codes:
+                    continue
+                if is_protected(U.id, L) or req_map.get((U.id, d)):
+                    continue
+                if night_map.get((U.id, d)) or night_map.get((U.id, d - timedelta(days=1))):
+                    continue
+                for O in active:
+                    # 交代後も O が target 以上を保つ＝新規代休を作らない（主ループより厳格）
+                    if rest[O.id] < target_holidays + 1 or O.id == U.id:
+                        continue
+                    if not _in_rotation(O, rest[O.id], num_days):
+                        continue
+                    if is_protected(O.id, L) or not qualifies(O.id, L):
+                        continue
+                    if skill_of(U.id, L) == SkillRank.A and skill_of(O.id, L) != SkillRank.A:
+                        if sum(1 for sid in loc_roster[(d, L)] if sid != U.id and skill_of(sid, L) == SkillRank.A) < 1:
+                            continue
+                    if skill_of(O.id, L) == SkillRank.D:
+                        if sum(1 for sid in loc_roster[(d, L)] if sid != U.id and skill_of(sid, L).value > SkillRank.D.value) < 1:
+                            continue
+                    if gender_only.get(L) == '女性のみ' and O.gender.value == '男':
+                        continue
+                    if not is_free_weekday(O.id, d):
+                        continue
+                    if consec_if_work(O.id, d) > 6:
+                        continue
+                    da.staff_id = O.id
+                    assign[(O.id, d)] = da
+                    del assign[(U.id, d)]
+                    loc_roster[(d, L)].discard(U.id)
+                    loc_roster[(d, L)].add(O.id)
+                    rest[U.id] += 1
+                    rest[O.id] -= 1
+                    moves += 1
+                    mop_improved = True
+                    done = True
+                    break
+
     # 別部門/育休/新人/MRI専門は「余剰」として数えない（見かけ値を排除）。ローテ要員のみで併存を測る。
     rotation = [s for s in active if _in_rotation(s, rest[s.id], num_days)]
     rot_rest = {s.id: rest[s.id] for s in rotation}
