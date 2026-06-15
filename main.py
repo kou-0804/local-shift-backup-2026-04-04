@@ -474,6 +474,39 @@ def pre_seed_rest_days(technicians, requests, night_assignments, year: int, mont
     return pre_seeded
 
 
+def _in_rotation(staff, rest_val, num_days, long_leave_slack: int = 10):
+    """画像診断ローテの実働要員かを判定（リバランサーの over集合・mover から除外する人を弾く）。
+
+    除外: 別部門(核医学/治療) / MRI専門 / 新人(経験1年以下) / 当月ほぼ全休(育休・長期休)。
+    rest_val は当月の公休相当日数（半休0.5込み）。num_days は当月日数。
+    """
+    note = getattr(staff, 'note', '') or ''
+    if '核医学' in note or '治療' in note:
+        return False
+    if 'MRI専門' in note:
+        return False
+    if getattr(staff, 'experience_years', 99) <= 1:
+        return False
+    if rest_val >= num_days - long_leave_slack:   # 育休/長期休: 実勤務がごく僅か
+        return False
+    return True
+
+
+def _coexistence_report(rest_map, target):
+    """代休(公休<目標)と余剰(公休>目標)の併存状況を集計（ローテ要員の rest_map を渡す）。"""
+    unders = {k: v for k, v in rest_map.items() if v < target}
+    overs = {k: v for k, v in rest_map.items() if v > target}
+    daikyu = sum(target - v for v in unders.values())
+    surplus = sum(v - target for v in overs.values())
+    return {
+        "n_under": len(unders),
+        "n_over": len(overs),
+        "daikyu_days": round(daikyu, 2),
+        "surplus_days": round(surplus, 2),
+        "coexists": len(unders) > 0 and len(overs) > 0,
+    }
+
+
 def rebalance_workload(day_result_list, technicians, skills, locations, requests,
                        night_assignments, year: int, month: int, target_holidays: int):
     """後段リバランサー: 過剰休(公休>目標)の人の空き平日に日勤を移し、代休(公休<目標)の人を
@@ -632,9 +665,78 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     moves += 1
                     changed = True
                     break
-    n_under = sum(1 for s in active if rest[s.id] < target_holidays)
-    n_over = sum(1 for s in active if rest[s.id] > target_holidays)
-    print(f"  ⚖️ リバランサー(貪欲): {moves}件移動 → 目標未満{n_under}名 / 超過{n_over}名", flush=True)
+    # === 最終モップアップ: 主ループが round 上限/順序で取りこぼした「厳密に改善する」交換を回収する。
+    # ドナー O は交代後も target 以上を保つ者のみ（rest[O] >= target+1）＝新規代休を作らない。
+    # under U の代休を解消（U は +0.5 超過まで許容）。各 move は総代休を厳密に減らすので必ず収束する。
+    mop_improved = True
+    while mop_improved:
+        mop_improved = False
+        m_unders = sorted([s for s in active if rest[s.id] < target_holidays], key=lambda s: rest[s.id])
+        if not m_unders:
+            break
+        for U in m_unders:
+            if rest[U.id] >= target_holidays:
+                continue
+            done = False
+            for d in all_days:
+                if done:
+                    break
+                if is_pub(d):
+                    continue
+                da = assign.get((U.id, d))
+                if not da or da.location_code in ('休', '○'):
+                    continue
+                L = da.location_code
+                if L in LATE or L not in loc_codes:
+                    continue
+                if is_protected(U.id, L) or req_map.get((U.id, d)):
+                    continue
+                if night_map.get((U.id, d)) or night_map.get((U.id, d - timedelta(days=1))):
+                    continue
+                for O in active:
+                    # 交代後も O が target 以上を保つ＝新規代休を作らない（主ループより厳格）
+                    if rest[O.id] < target_holidays + 1 or O.id == U.id:
+                        continue
+                    if not _in_rotation(O, rest[O.id], num_days):
+                        continue
+                    if is_protected(O.id, L) or not qualifies(O.id, L):
+                        continue
+                    if skill_of(U.id, L) == SkillRank.A and skill_of(O.id, L) != SkillRank.A:
+                        if sum(1 for sid in loc_roster[(d, L)] if sid != U.id and skill_of(sid, L) == SkillRank.A) < 1:
+                            continue
+                    if skill_of(O.id, L) == SkillRank.D:
+                        if sum(1 for sid in loc_roster[(d, L)] if sid != U.id and skill_of(sid, L).value > SkillRank.D.value) < 1:
+                            continue
+                    if gender_only.get(L) == '女性のみ' and O.gender.value == '男':
+                        continue
+                    if not is_free_weekday(O.id, d):
+                        continue
+                    if consec_if_work(O.id, d) > 6:
+                        continue
+                    da.staff_id = O.id
+                    assign[(O.id, d)] = da
+                    del assign[(U.id, d)]
+                    loc_roster[(d, L)].discard(U.id)
+                    loc_roster[(d, L)].add(O.id)
+                    rest[U.id] += 1
+                    rest[O.id] -= 1
+                    moves += 1
+                    mop_improved = True
+                    done = True
+                    break
+
+    # 別部門/育休/新人/MRI専門は「余剰」として数えない（見かけ値を排除）。ローテ要員のみで併存を測る。
+    rotation = [s for s in active if _in_rotation(s, rest[s.id], num_days)]
+    rot_rest = {s.id: rest[s.id] for s in rotation}
+    rep = _coexistence_report(rot_rest, target_holidays)
+    print(f"  ⚖️ リバランサー(貪欲): {moves}件移動 → ローテ内 代休{rep['n_under']}名({rep['daikyu_days']}日) "
+          f"/ 余剰{rep['n_over']}名({rep['surplus_days']}日)", flush=True)
+    if rep["coexists"]:
+        # 代休と余剰が併存して残った＝これ以上の自動解消が出来なかった。理由を明示する（正直性）。
+        stuck = sorted([s for s in rotation if rest[s.id] < target_holidays], key=lambda s: rest[s.id])
+        for U in stuck:
+            print(f"    ⚠️ 代休残存: {U.name}(公休{rest[U.id]}) — 有資格・空き平日・連勤・性別の"
+                  f"いずれかが噛み合わず肩代わり不能", flush=True)
     return day_result_list
 
 
