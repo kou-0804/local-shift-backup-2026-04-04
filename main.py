@@ -902,6 +902,7 @@ def optimize_assignments_cpsat(day_result_list, technicians, skills, locations, 
         n = len(people)
         cands = [s for s in active
                  if qualifies(s.id, L) and not is_fixed_day(s.id, d)
+                 and not night_map.get((s.id, d - timedelta(days=2)))  # 夜勤明け後の休みを保護(候補から除外)
                  and not (gender_only.get(L) == '女性のみ' and s.gender.value == '男')]
         cand_by_slot[(d, L)] = cands
         for s in cands:
