@@ -650,6 +650,10 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                             continue
                     if gender_only.get(L) == '女性のみ' and O.gender.value == '男':
                         continue
+                    # 夜勤明け後の休み優先(ソフト): O が d-2 に夜勤＝当日 d は「明けの翌日」。
+                    # その日に日勤を移すと明け後の休みが潰れるため、移動先から除外して保護する。
+                    if night_map.get((O.id, d - timedelta(days=2))):
+                        continue
                     if not is_free_weekday(O.id, d):
                         continue
                     if consec_if_work(O.id, d) > 6:
@@ -708,6 +712,11 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                         if sum(1 for sid in loc_roster[(d, L)] if sid != U.id and skill_of(sid, L).value > SkillRank.D.value) < 1:
                             continue
                     if gender_only.get(L) == '女性のみ' and O.gender.value == '男':
+                        continue
+                    # 夜勤明け後の休み優先(完全保護): O が d-2 に夜勤＝当日 d は明けの翌日。
+                    # 明け後の休みを守るため、モップアップ(代休撲滅の最終手段)でもこの日には
+                    # 日勤を移さない。運用者判断で明け後休を代休回避より優先する（代休増を許容）。
+                    if night_map.get((O.id, d - timedelta(days=2))):
                         continue
                     if not is_free_weekday(O.id, d):
                         continue
