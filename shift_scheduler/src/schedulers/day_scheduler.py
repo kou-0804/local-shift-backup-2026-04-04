@@ -106,9 +106,13 @@ class DayScheduler:
             return 0
         h = assignment_history
         is_paid = l_code in self.PAID_DUTIES
-        prev_pen = -400000 if is_paid else -120000   # 前日（連続）
-        gap1_pen = -100000 if is_paid else -30000    # 中1日（2日前）
-        gap2_pen = -30000  if is_paid else -12000    # 中2日（3日前）
+        # ポは利用者要望で連続を特に強く禁止(-90万準禁止)。他手当は-40万、非手当は-12万。
+        if l_code == 'ポ':
+            prev_pen, gap1_pen, gap2_pen = -900000, -120000, -30000
+        elif is_paid:
+            prev_pen, gap1_pen, gap2_pen = -400000, -100000, -30000
+        else:
+            prev_pen, gap1_pen, gap2_pen = -120000, -30000, -12000
         if len(h) >= 1 and h[-1].get(staff_id) == l_code:
             return prev_pen
         if len(h) >= 2 and h[-2].get(staff_id) == l_code:
