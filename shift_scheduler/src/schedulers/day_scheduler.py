@@ -74,6 +74,21 @@ class DayScheduler:
     # 近接クラスタ回避の対象業務（希少＋手当）。
     # CT/ク等の高ボリューム業務や専従(病CT専従/MRI専門/PET/RI/放治/館山)は対象外。
     PROXIMITY_DUTIES = ('HB', 'DR', 'ア', 'ポ', '超遅', 'ク遅', 'M遅', 'OP')
+    # 手当（手当金）に関わる業務。連続回避・回数上限を特に強く適用する。
+    PAID_DUTIES = ('超遅', 'ポ', 'ク遅', 'M遅')
+    # 手当業務の1人あたり月間目安上限。上限手前から抑制し上限超で強く抑制する。
+    # 上限3だと重回数者を若手へ強制再配置し代休が倍増したため、代休とのバランスで4に設定。
+    PAID_MONTHLY_CAP = 4
+
+    # ポータブル(ポ)のランク制約緩和フラグ。仮説検証の結果、緩和しても代休は減らず
+    # むしろ悪化(7.0→8.0)したため False。代休増は「資格者の日ごと不足」ではなく
+    # 「分散先の若手に公休の余裕が無い」構造的要因で、ランク緩和では解消できない。
+    # Bランク必須(PB-01)・D×D禁止(PB-04)は技量担保のため維持する。
+    RELAX_PORTABLE_RANK = False
+
+    # ポータブル(ポ)で「下位レイヤー(若手)優先・上位レイヤー(ベテラン)は逃がし弁」とする
+    # 経験年数の境界。この年数以下を下位（優先）、超を上位（後回し・代休/連続回避の逃がし弁）とする。
+    PORTABLE_JUNIOR_MAX_YEARS = 7
 
     def _proximity_penalty(self, staff_id, l_code, assignment_history):
         """同一業務の近接クラスタに対する段階的ソフト減点（負値）を返す。
@@ -82,16 +97,24 @@ class DayScheduler:
         最も直近の occurrence を1つだけ採用し多重加算しない。
         減点幅は配置不足(500万)・SR人数下限(300万)より必ず小さく保ち、
         他に担当者がいない日は連続を許容してカバレッジを死守する（ソフト制約）。
+
+        手当業務(PAID_DUTIES)は「中1日以上空ける」を徹底するため前日連続を強化するが、
+        休/予算判断(約100〜150万)を乱して代休を誘発しない水準(数十万)に上限を抑える。
+        HB/DR/ア/OP は従来値のままでカバレッジを保護。
         """
         if l_code not in self.PROXIMITY_DUTIES or not assignment_history:
             return 0
         h = assignment_history
+        is_paid = l_code in self.PAID_DUTIES
+        prev_pen = -400000 if is_paid else -120000   # 前日（連続）
+        gap1_pen = -100000 if is_paid else -30000    # 中1日（2日前）
+        gap2_pen = -30000  if is_paid else -12000    # 中2日（3日前）
         if len(h) >= 1 and h[-1].get(staff_id) == l_code:
-            return -120000   # 前日（連続）
+            return prev_pen
         if len(h) >= 2 and h[-2].get(staff_id) == l_code:
-            return -30000    # 中1日（2日前に担当）
+            return gap1_pen
         if len(h) >= 3 and h[-3].get(staff_id) == l_code:
-            return -12000    # 中2日（3日前に担当）
+            return gap2_pen
         return 0
 
     def _get_base_location_code(self, loc_code: str) -> str:
@@ -842,8 +865,25 @@ class DayScheduler:
                         base_score = -1500000 
                     elif over == 0:
                         # 予算ちょうど到達：できれば避ける（マイナススコア）
-                        base_score = -200000 
+                        base_score = -200000
 
+                # 手当業務(ポ/超遅/ク遅/M遅)の1人あたり月間上限(=3回)。回数集中を抑制する。
+                # 累積回数(_L_*)で段階的に減点。配置充足(500万)より弱いソフトのため、他に
+                # 担当者がいない最終手段では上限超過を許容しINFEASIBLE化しない。予算ブロックで
+                # base_score が再代入された後に加算し、上限抑制が確実に効くようにする。
+                if l_code in self.PAID_DUTIES:
+                    _paid_count = assignment_counts[s.id].get('_L_' + l_code, 0)
+                    if _paid_count >= self.PAID_MONTHLY_CAP:        # 上限超(5回目〜): 準禁止
+                        base_score += -2000000
+                    elif _paid_count == self.PAID_MONTHLY_CAP - 1:  # 上限手前(4回目): 弱い抑制(逃がし弁より弱く保つ)
+                        base_score += -50000
+
+                # ポータブル(ポ)の上位レイヤー(>7年)は「逃がし弁」。下位(若手)を優先しつつ、
+                # 若手が連続(-18万)・予算オーバー(-150万)になる時だけ上位者が引き取れるよう、
+                # それらより弱い控えめ減点(-10万)で上位者を後回しにする。カバレッジ(500万)・
+                # B必須(300万)より弱いため、担当不能日は上位者でも確実に充足する（ソフト）。
+                if l_code == 'ポ' and int(s.experience_years) > self.PORTABLE_JUNIOR_MAX_YEARS:
+                    base_score += -100000
 
                 maximization_objective.append(x[s.id, l_code] * base_score)
 
@@ -1247,6 +1287,9 @@ class DayScheduler:
                              weekday = current_date.weekday()
                              if weekday in [0, 1, 3, 5]: # Mon, Tue, Thu, Sat
                                  skip_min_rank = True
+                        # ポは権限制限済のためBランク必須(PB-01)を緩和し availability を広げる
+                        if l_code == 'ポ' and self.RELAX_PORTABLE_RANK:
+                            skip_min_rank = True
                         
                         if not skip_min_rank:
                             qualified = [v for s, v in vars_s_loc
@@ -1281,10 +1324,11 @@ class DayScheduler:
             # --- Specific Rules (PB-04, PB-05) ---
             
             # PB-04: Portable (ポ) D Pair Ban
-            if l_code == 'ポ':
+            # RELAX_PORTABLE_RANK 有効時は D×D 禁止も緩和し、日ごとの候補を広げる。
+            if l_code == 'ポ' and not self.RELAX_PORTABLE_RANK:
                 req_num = location_needs.get(l_code, 0)
                 if req_num >= 2:
-                    d_vars = [v for s, v in vars_s_loc 
+                    d_vars = [v for s, v in vars_s_loc
                               if self.skills.get(s.id, {}).get(l_code, SkillRank.NONE) == SkillRank.D]
                     if len(d_vars) >= 2:
                         model.Add(sum(d_vars) <= 1)
