@@ -1156,19 +1156,29 @@ class DayScheduler:
                     model.Add(sum(pool) + sl >= n)
                     fairness_penalties.append(sl * 3000000)
 
-                if weekday == 2:  # 水曜
-                    _add_soft_min(3, a_vars,  f'clmr_a_slack_{current_date.day}')
-                    _add_soft_min(4, ab_vars, f'clmr_ab_slack_{current_date.day}')
+                # CLMRのランク下限は曜日別。基準(月火木土)の A下限/AB下限 は
+                # パワーバランスマスタ(CSV)を単一の真実とし、水曜・金曜のみ下で上書きする。
+                # 汎用PB処理(_add_power_balance_constraints)はCLMRを除外しているため、
+                # CSVのCLMR行(最低ランクA/B)はここでのみ反映される。
+                clmr_pb = [r for r in self.pb_rules if r.location_code == 'CLMR']
+                base_a_min = next((r.min_count for r in clmr_pb
+                                   if r.min_rank == SkillRank.A and r.min_count), 2)
+                base_ab_min = next((r.min_count for r in clmr_pb
+                                    if r.min_rank == SkillRank.B and r.min_count), 3)
+
+                if weekday == 2:  # 水曜: 高負荷日のため基準より1段厳格＋C/D禁止(上書き)
+                    _add_soft_min(base_a_min + 1, a_vars,  f'clmr_a_slack_{current_date.day}')
+                    _add_soft_min(base_ab_min + 1, ab_vars, f'clmr_ab_slack_{current_date.day}')
                     # 仕様7.1.5: 水曜CLMRは C・D 完全禁止（A/Bランクのみで構成）
                     if d_vars: model.Add(sum(d_vars) == 0) # D禁止
                     if c_vars: model.Add(sum(c_vars) == 0) # C禁止
-                elif weekday == 4:  # 金曜
-                    _add_soft_min(2, a_vars,  f'clmr_a_slack_{current_date.day}')
-                    _add_soft_min(4, ab_vars, f'clmr_ab_slack_{current_date.day}')
+                elif weekday == 4:  # 金曜: AB下限のみ基準より1段厳格(上書き)
+                    _add_soft_min(base_a_min, a_vars,  f'clmr_a_slack_{current_date.day}')
+                    _add_soft_min(base_ab_min + 1, ab_vars, f'clmr_ab_slack_{current_date.day}')
                     if d_vars: model.Add(sum(d_vars) <= 1)
-                else:  # 月火木土
-                    _add_soft_min(2, a_vars,  f'clmr_a_slack_{current_date.day}')
-                    _add_soft_min(3, ab_vars, f'clmr_ab_slack_{current_date.day}')
+                else:  # 月火木土: CSV基準値どおり
+                    _add_soft_min(base_a_min, a_vars,  f'clmr_a_slack_{current_date.day}')
+                    _add_soft_min(base_ab_min, ab_vars, f'clmr_ab_slack_{current_date.day}')
                     if d_vars: model.Add(sum(d_vars) <= 1)
                 
                 # Soft Constraint for D
@@ -1281,6 +1291,8 @@ class DayScheduler:
             model.Add(sum(vars_loc_only) <= req_num)
 
             # --- Generic Rules (PB-01, PB-02, PB-03) ---
+            # CLMRはここでは扱わない。CLMRのランク下限は曜日別(水曜/金曜で厳格化)のため
+            # SR-CLMR(5.5節)が一元管理する。CSVのCLMR行はSR-CLMR側の基準値として読まれる。
             if l_code in pb_map and l_code != 'CLMR':
                 for pb in pb_map[l_code]:
                     # PB-01: Min Rank
