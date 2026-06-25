@@ -1,0 +1,36 @@
+--- shift_scheduler/src/schedulers/day_scheduler.py
++++ shift_scheduler/src/schedulers/day_scheduler.py
+@@ -291,6 +291,8 @@
+         x = {}  # 決定変数 x[staff_id, location_code]
+         maximization_objective = []
+         fairness_penalties = []
++        
++        debug_t002 = (current_date.month == 5 and current_date.day == 20)
+ 
+         # Available staff list (exclude night shift, ake, forced holiday)
+         available_staff = []
+@@ -298,20 +300,32 @@
+             req = req_map.get((s.id, current_date))
+             # 1. Check if night or ake
+             if night_map.get((s.id, current_date), False):
++                if debug_t002 and s.id == 'T002': print("T002 skip: night")
+                 continue
+             if night_map.get((s.id, current_date - timedelta(days=1)), False):
++                if debug_t002 and s.id == 'T002': print("T002 skip: ake")
+                 continue
+             
+             # 2. Check if holiday (including pre-seeded ☆)
+             if req in HOLIDAY_SYMS:
++                if debug_t002 and s.id == 'T002': print("T002 skip: holiday")
+                 continue
+             
+             # 3. Handle Forced Work (業配, 出, etc)
+             if req in FORCED_WORK_SYMS:
+                 if self._is_dedicated_forced_work(req):
+                     pass
+                 else:
++                    if debug_t002 and s.id == 'T002': print(f"T002 skip: {req}")
+                     continue
+                     
++            if debug_t002 and s.id == 'T002': print("T002 AVAILABLE")
+             available_staff.append(s)

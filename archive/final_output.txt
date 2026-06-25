@@ -1,0 +1,735 @@
+======================================================================
+勤務表作成システム - 2026年5月
+======================================================================
+
+📂 データ読み込み中...
+Loading Night Skill Overrides from shift_scheduler/data/夜勤スキル一覧.csv
+Loading generic request file: shift_scheduler/data/予定申請.csv
+Detected 'HolidaySymbol' format in 予定申請_202605.csv
+  夜勤回数データ: 38名分
+  育成・業務拡大ルール: 5件ロードしました
+  技師: 66名
+  勤務場所: 22箇所
+  予定申請: 274件
+
+🌙 夜勤スキル導出中...
+  MRスキル: 19名
+  アンギオスキル: 13名
+  心カテスキル: 19名
+
+🔙 前月の夜勤実績を確認中...
+  前月の夜勤実績: 15件 -> 統合
+🌙 夜勤スケジューリング実行中...
+
+Starting CP-SAT solver v9.15.6755
+Parameters: random_seed: 42 max_time_in_seconds: 60 log_search_progress: true num_workers: 1
+
+Initial optimization model '': (model_fingerprint: 0x897f60bb546081f9)
+#Variables: 9'066 (#bools: 7'651 #ints: 297 in objective) (8'549 primary variables)
+  - 8'769 Booleans in [0,1]
+  - 31 in [0,3]
+  - 38 in [0,5]
+  - 190 in [0,7]
+  - 38 in [0,31]
+#kBoolAnd: 6'270 (#enforced: 6'270) (#literals: 18'810)
+#kBoolOr: 6'270 (#enforced: 6'270) (#literals: 12'540)
+#kLinMax: 38 (#expressions: 76)
+#kLinear1: 313 (#enforced: 72)
+#kLinear2: 1'140
+#kLinear3: 2'204 (#enforced: 2'204)
+#kLinearN: 863 (#enforced: 366) (#terms: 8'894)
+
+Starting presolve at 0.01s
+  2.47e-03s  0.00e+00d  [DetectDominanceRelations] 
+  2.12e-02s  0.00e+00d  [PresolveToFixPoint] #num_loops=3 #num_dual_strengthening=2 
+  2.62e-04s  0.00e+00d  [ExtractEncodingFromLinear] 
+  3.77e-04s  0.00e+00d  [DetectDuplicateColumns] 
+  1.57e-03s  0.00e+00d  [DetectDuplicateConstraints] #duplicates=116 
+[Symmetry] Graph for symmetry has 33'627 nodes and 82'795 arcs.
+[Symmetry] Symmetry computation done. time: 0.00535 dtime: 0.0114608
+[Symmetry] #generators: 8, average support size: 60.75
+[Symmetry] 243 orbits on 486 variables with sizes: 2,2,2,2,2,2,2,2,2,2,...
+[Symmetry] Found orbitope of size 1 x 2
+[SAT presolve] num removable Booleans: 0 / 6'634
+[SAT presolve] num trivial clauses: 0
+[SAT presolve] [0s] clauses:21'763 literals:62'675 vars:6'484 one_side_vars:6 simple_definition:4'677 singleton_clauses:0
+[SAT presolve] [0.001501s] clauses:17'611 literals:41'288 vars:6'479 one_side_vars:899 simple_definition:4'590 singleton_clauses:0
+[SAT presolve] [0.001898s] clauses:17'611 literals:41'288 vars:6'479 one_side_vars:899 simple_definition:4'590 singleton_clauses:0
+  1.25e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] #without_enforcements=75 
+  4.34e-02s  3.62e-02d  [Probe] #probed=11'546 #fixed_bools=900 #new_bounds=38 #equiv=818 #new_binary_clauses=3'620 
+  6.91e-03s  8.63e-03d  [MaxClique] Merged 12'924 constraints with 25'848 literals into 8'221 constraints with 19'509 literals
+  1.45e-03s  0.00e+00d  [DetectDominanceRelations] 
+  8.13e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=3 #num_dual_strengthening=2 
+  1.44e-03s  0.00e+00d  [ProcessAtMostOneAndLinear] #num_changes=4 
+  1.34e-03s  0.00e+00d  [DetectDuplicateConstraints] #duplicates=818 
+  1.05e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  2.59e-04s  1.83e-05d  [DetectDominatedLinearConstraints] #relevant_constraints=461 #num_inclusions=219 
+  1.22e-04s  0.00e+00d  [DetectDifferentVariables] 
+  2.80e-03s  1.73e-04d  [ProcessSetPPC] #relevant_constraints=10'778 #num_inclusions=3'140 
+  1.67e-03s  2.54e-04d  [TransformClausesToExactlyOne] #num_amos=6'424 #num_clauses=3'897 #num_checked=3'897 
+  7.60e-04s  0.00e+00d  [DetectEncodedComplexDomains] 
+  1.77e-04s  0.00e+00d  [FindAlmostIdenticalLinearConstraints] 
+  1.39e-03s  1.23e-03d  [FindBigAtMostOneAndLinearOverlap] 
+  6.67e-04s  4.75e-04d  [FindBigVerticalLinearOverlap] 
+  1.83e-04s  1.98e-05d  [FindBigHorizontalLinearOverlap] #linears=443 
+  7.02e-04s  6.53e-05d  [MergeClauses] 
+  2.31e-03s  0.00e+00d  [DetectDominanceRelations] 
+  1.59e-03s  0.00e+00d  [DetectDominanceRelations] 
+  1.06e-02s  0.00e+00d  [PresolveToFixPoint] #num_loops=4 #num_dual_strengthening=2 
+  1.43e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.33e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  2.87e-04s  0.00e+00d  [DetectDuplicateColumns] 
+  1.10e-03s  0.00e+00d  [DetectDuplicateConstraints] 
+[Symmetry] Graph for symmetry has 22'055 nodes and 40'733 arcs.
+[Symmetry] Symmetry computation done. time: 0.002694 dtime: 0.00637903
+[Symmetry] #generators: 1, average support size: 350
+[Symmetry] 175 orbits on 350 variables with sizes: 2,2,2,2,2,2,2,2,2,2,...
+[SAT presolve] num removable Booleans: 0 / 4'866
+[SAT presolve] num trivial clauses: 0
+[SAT presolve] [0s] clauses:7'361 literals:20'000 vars:4'791 one_side_vars:2218 simple_definition:1'676 singleton_clauses:0
+[SAT presolve] [0.000394s] clauses:7'361 literals:20'000 vars:4'791 one_side_vars:2218 simple_definition:1'676 singleton_clauses:0
+[SAT presolve] [0.000711s] clauses:7'361 literals:20'000 vars:4'791 one_side_vars:2218 simple_definition:1'676 singleton_clauses:0
+  1.20e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  3.34e-02s  2.65e-02d  [Probe] #probed=11'500 #new_binary_clauses=1'620 
+  4.85e-03s  7.61e-03d  [MaxClique] 
+  1.44e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.16e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  1.84e-03s  0.00e+00d  [ProcessAtMostOneAndLinear] 
+  1.33e-03s  0.00e+00d  [DetectDuplicateConstraints] 
+  1.34e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  3.84e-04s  1.82e-05d  [DetectDominatedLinearConstraints] #relevant_constraints=458 #num_inclusions=219 
+  1.60e-04s  0.00e+00d  [DetectDifferentVariables] 
+  2.15e-03s  1.73e-04d  [ProcessSetPPC] #relevant_constraints=10'779 #num_inclusions=3'140 
+  1.50e-03s  2.54e-04d  [TransformClausesToExactlyOne] #num_amos=6'424 #num_clauses=3'899 #num_checked=3'899 
+  1.61e-04s  0.00e+00d  [DetectEncodedComplexDomains] 
+  1.14e-04s  0.00e+00d  [FindAlmostIdenticalLinearConstraints] 
+  1.47e-03s  1.23e-03d  [FindBigAtMostOneAndLinearOverlap] 
+  6.16e-04s  4.74e-04d  [FindBigVerticalLinearOverlap] 
+  2.11e-04s  1.98e-05d  [FindBigHorizontalLinearOverlap] #linears=443 
+  7.82e-04s  6.54e-05d  [MergeClauses] 
+  2.04e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.53e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  1.62e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.47e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  3.42e-04s  0.00e+00d  [DetectDuplicateColumns] 
+  1.18e-03s  0.00e+00d  [DetectDuplicateConstraints] 
+[Symmetry] Graph for symmetry has 22'049 nodes and 40'718 arcs.
+[Symmetry] Symmetry computation done. time: 0.002938 dtime: 0.00637849
+[Symmetry] #generators: 1, average support size: 350
+[Symmetry] 175 orbits on 350 variables with sizes: 2,2,2,2,2,2,2,2,2,2,...
+[SAT presolve] num removable Booleans: 0 / 4'866
+[SAT presolve] num trivial clauses: 0
+[SAT presolve] [0s] clauses:7'361 literals:20'000 vars:4'791 one_side_vars:2218 simple_definition:1'676 singleton_clauses:0
+[SAT presolve] [0.000394s] clauses:7'361 literals:20'000 vars:4'791 one_side_vars:2218 simple_definition:1'676 singleton_clauses:0
+[SAT presolve] [0.000733s] clauses:7'361 literals:20'000 vars:4'791 one_side_vars:2218 simple_definition:1'676 singleton_clauses:0
+  1.37e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  3.18e-02s  2.65e-02d  [Probe] #probed=11'500 #new_binary_clauses=1'620 
+  5.31e-03s  7.61e-03d  [MaxClique] 
+  1.72e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.83e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  1.50e-03s  0.00e+00d  [ProcessAtMostOneAndLinear] 
+  1.77e-03s  0.00e+00d  [DetectDuplicateConstraints] 
+  1.60e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  3.86e-04s  1.82e-05d  [DetectDominatedLinearConstraints] #relevant_constraints=455 #num_inclusions=219 
+  2.26e-04s  0.00e+00d  [DetectDifferentVariables] 
+  2.14e-03s  1.73e-04d  [ProcessSetPPC] #relevant_constraints=10'776 #num_inclusions=3'140 
+  1.61e-03s  2.54e-04d  [TransformClausesToExactlyOne] #num_amos=6'424 #num_clauses=3'899 #num_checked=3'899 
+  3.37e-04s  0.00e+00d  [DetectEncodedComplexDomains] 
+  2.54e-04s  0.00e+00d  [FindAlmostIdenticalLinearConstraints] 
+  1.40e-03s  1.23e-03d  [FindBigAtMostOneAndLinearOverlap] 
+  6.08e-04s  4.74e-04d  [FindBigVerticalLinearOverlap] 
+  2.53e-04s  1.98e-05d  [FindBigHorizontalLinearOverlap] #linears=443 
+  7.67e-04s  6.54e-05d  [MergeClauses] 
+  1.84e-03s  0.00e+00d  [DetectDominanceRelations] 
+  6.04e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  2.38e-04s  0.00e+00d  [MergeNoOverlap] 
+  3.47e-04s  0.00e+00d  [MergeNoOverlap2D] 
+  1.02e-03s  0.00e+00d  [ExpandObjective] 
+
+Presolve summary:
+  - 857 affine relations were detected.
+  - rule 'TODO dual: add implied bound' was applied 16 times.
+  - rule 'TODO dual: only one blocking constraint?' was applied 48'733 times.
+  - rule 'TODO dual: only one blocking enforced constraint?' was applied 1'066 times.
+  - rule 'TODO dual: only one unspecified blocking constraint?' was applied 2'801 times.
+  - rule 'TODO duplicate: duplicate columns in Boolean constraints' was applied 8 times.
+  - rule 'TODO lin_max: linear expression above max' was applied 342 times.
+  - rule 'affine: new relation' was applied 857 times.
+  - rule 'at_most_one: removed literals' was applied 1'797 times.
+  - rule 'at_most_one: size one' was applied 1'824 times.
+  - rule 'at_most_one: transformed into max clique' was applied 1 time.
+  - rule 'bool and: always false' was applied 1'632 times.
+  - rule 'bool_and: x => x' was applied 72 times.
+  - rule 'bool_or: always true' was applied 1'632 times.
+  - rule 'bool_or: implications' was applied 1'013 times.
+  - rule 'bool_or: only one literal' was applied 1'916 times.
+  - rule 'bool_or: removed enforcement literal' was applied 6'563 times.
+  - rule 'deductions: 677 stored' was applied 1 time.
+  - rule 'domination: in exactly one' was applied 27 times.
+  - rule 'dual: enforced equivalence' was applied 36 times.
+  - rule 'dual: fix variable' was applied 73 times.
+  - rule 'dual: reduced domain' was applied 199 times.
+  - rule 'duplicate: removed constraint' was applied 934 times.
+  - rule 'duplicate: removed enforced constraint' was applied 75 times.
+  - rule 'enforcement: false literal' was applied 75 times.
+  - rule 'enforcement: true literal' was applied 118 times.
+  - rule 'exactly_one: removed literals' was applied 27 times.
+  - rule 'exactly_one: singleton' was applied 27 times.
+  - rule 'exactly_one: size two' was applied 1 time.
+  - rule 'lin_max: target domain reduced' was applied 38 times.
+  - rule 'linear + amo: extracted enforcement literal' was applied 34 times.
+  - rule 'linear + amo: fixed literal implied by enforcement' was applied 28 times.
+  - rule 'linear + amo: trivial linear constraint' was applied 2 times.
+  - rule 'linear1: x in domain' was applied 189 times.
+  - rule 'linear2: convert ax + by != cte to clauses' was applied 1'048 times.
+  - rule 'linear2: implied ax + by = cte has only one solution' was applied 8 times.
+  - rule 'linear2: infeasible relation' was applied 116 times.
+  - rule 'linear: always true' was applied 395 times.
+  - rule 'linear: empty' was applied 118 times.
+  - rule 'linear: fixed or dup variables' was applied 274 times.
+  - rule 'linear: negative clause' was applied 8 times.
+  - rule 'linear: negative reified and' was applied 31 times.
+  - rule 'linear: positive clause' was applied 124 times.
+  - rule 'linear: positive reified and' was applied 1 time.
+  - rule 'linear: reduced variable domains' was applied 2 times.
+  - rule 'linear: small Boolean expression' was applied 1'624 times.
+  - rule 'linear: tightened into equality' was applied 12 times.
+  - rule 'linear: variable substitution 0' was applied 10 times.
+  - rule 'new_bool: integer encoding' was applied 83 times.
+  - rule 'objective: variable not used elsewhere' was applied 44 times.
+  - rule 'presolve: 3122 unused variables removed.' was applied 1 time.
+  - rule 'presolve: iteration' was applied 3 times.
+  - rule 'variables: add encoding constraint' was applied 83 times.
+  - rule 'variables: only used in objective and in encodings' was applied 28 times.
+  - rule 'variables: reduce domain to encoded values' was applied 1 time.
+
+Presolved optimization model '': (model_fingerprint: 0x1895f0eea20894c1)
+#Variables: 5'105 (#bools: 3'975 #ints: 239 in objective) (4'837 primary variables)
+  - 4'866 Booleans in [0,1]
+  - 2 in [0,2]
+  - 51 in [0,3]
+  - 36 in [0,4]
+  - 21 in [0,5]
+  - 92 in [0,6]
+  - 1 in [0,13]
+  - 2 in [0,15]
+  - 1 in [0,17]
+  - 1 in [0,18]
+  - 1 in [0,20]
+  - 5 in [0,21]
+  - 2 in [0,22]
+  - 8 in [0,23]
+  - 3 in [0,24]
+  - 1 in [0,25]
+  - 3 in [0,26]
+  - 7 in [0,27]
+  - 2 in [0,29]
+#kAtMostOne: 2'962 (#literals: 8'991)
+#kBoolAnd: 1'837 (#enforced: 1'837) (#literals: 5'299)
+#kBoolOr: 3'899 (#literals: 13'076)
+#kLinMax: 38 (#expressions: 76)
+#kLinear3: 2 (#enforced: 2)
+#kLinearN: 452 (#enforced: 152) (#terms: 3'998)
+[Symmetry] Graph for symmetry has 18'001 nodes and 40'708 arcs.
+[Symmetry] Symmetry computation done. time: 0.002843 dtime: 0.00611971
+[Symmetry] #generators: 1, average support size: 350
+[Symmetry] 175 orbits on 350 variables with sizes: 2,2,2,2,2,2,2,2,2,2,...
+
+Preloading model.
+#Bound   0.34s best:inf   next:[220050,1.25276225e+09] initial_domain
+
+Starting search at 0.34s with 1 workers.
+1 full problem subsolver: [main]
+
+[Precedences] num_relations=0 num_clauses=3899
+[Probing] deterministic_time: 0.0251242 (limit: 1) wall_time: 0.023948 (4866/4866)
+[Probing]  - new binary clause: 1'620
+[LinearRelaxationBeforeCliqueExpansion] #linear:376 #at_most_ones:2962
+[FinalLinearRelaxation] #linear:3338 #cut_generators:0
+Initial num_bool: 4866
+#Bound   0.39s best:inf   next:[220200,1.25276225e+09] main (initial_propagation)
+
+Starting subsolver 'main' hint search at 0.39s
+Starting subsolver 'main' search at 0.39s
+#Bound   0.46s best:inf   next:[220750,1.25276225e+09] main
+#1       0.59s best:44570750 next:[220750,44570700] main
+#Bound   0.60s best:44570750 next:[1220750,44570700] main
+#2       0.69s best:18570750 next:[1220750,18570700] main
+#3       0.72s best:18170750 next:[1220750,18170700] main
+#4       0.77s best:17290750 next:[1220750,17290700] main
+#5       0.80s best:16090750 next:[1220750,16090700] main
+#6       0.85s best:15990750 next:[1220750,15990700] main
+#7      12.55s best:15980750 next:[1220750,15980700] main
+#8      12.73s best:15820750 next:[1220750,15820700] main
+#9      12.88s best:15660750 next:[1220750,15660700] main
+#10     13.26s best:15460800 next:[1220750,15460750] main
+#11     13.44s best:15460750 next:[1220750,15460700] main
+#12     13.60s best:15440750 next:[1220750,15440700] main
+#13     13.64s best:15430750 next:[1220750,15430700] main
+#14     13.69s best:15410750 next:[1220750,15410700] main
+#15     13.92s best:15400750 next:[1220750,15400700] main
+#16     14.07s best:15390800 next:[1220750,15390750] main
+#17     14.11s best:15390750 next:[1220750,15390700] main
+#18     14.15s best:15380800 next:[1220750,15380750] main
+#19     14.20s best:15380750 next:[1220750,15380700] main
+#20     14.23s best:15370750 next:[1220750,15370700] main
+#21     14.27s best:15360750 next:[1220750,15360700] main
+#22     14.31s best:15350800 next:[1220750,15350750] main
+#23     14.35s best:15350750 next:[1220750,15350700] main
+#24     14.39s best:15340800 next:[1220750,15340750] main
+#25     14.43s best:15340750 next:[1220750,15340700] main
+#26     14.46s best:15330750 next:[1220750,15330700] main
+#27     14.51s best:14810750 next:[1220750,14810700] main
+#28     14.56s best:14790750 next:[1220750,14790700] main
+#29     14.60s best:13660750 next:[1220750,13660700] main
+#30     14.66s best:12700750 next:[1220750,12700700] main
+#31     14.76s best:12670750 next:[1220750,12670700] main
+#32     14.84s best:12570800 next:[1220750,12570750] main
+#33     14.91s best:12570750 next:[1220750,12570700] main
+#34     14.96s best:12560750 next:[1220750,12560700] main
+#35     15.01s best:12550750 next:[1220750,12550700] main
+#36     15.05s best:12530750 next:[1220750,12530700] main
+#37     15.11s best:12500750 next:[1220750,12500700] main
+#38     15.16s best:12300800 next:[1220750,12300750] main
+#39     15.20s best:12300750 next:[1220750,12300700] main
+#40     15.25s best:12290750 next:[1220750,12290700] main
+#41     15.28s best:12240750 next:[1220750,12240700] main
+#42     15.32s best:12210750 next:[1220750,12210700] main
+#43     15.49s best:12200750 next:[1220750,12200700] main
+#44     15.53s best:12190750 next:[1220750,12190700] main
+#45     15.57s best:12110800 next:[1220750,12110750] main
+#46     15.61s best:12110750 next:[1220750,12110700] main
+#47     15.64s best:12100750 next:[1220750,12100700] main
+#48     15.68s best:12090750 next:[1220750,12090700] main
+#49     15.72s best:11990800 next:[1220750,11990750] main
+#50     15.76s best:11990750 next:[1220750,11990700] main
+#51     15.81s best:11980800 next:[1220750,11980750] main
+#52     15.85s best:11980750 next:[1220750,11980700] main
+#53     15.90s best:11950750 next:[1220750,11950700] main
+#54     15.93s best:11920750 next:[1220750,11920700] main
+#55     15.98s best:11910800 next:[1220750,11910750] main
+#56     16.02s best:11910750 next:[1220750,11910700] main
+#57     16.07s best:11900800 next:[1220750,11900750] main
+#58     16.12s best:11900750 next:[1220750,11900700] main
+#59     16.17s best:11890750 next:[1220750,11890700] main
+#60     16.23s best:11770750 next:[1220750,11770700] main
+#61     16.28s best:11700750 next:[1220750,11700700] main
+#62     16.32s best:11670800 next:[1220750,11670750] main
+#63     16.35s best:11670750 next:[1220750,11670700] main
+#64     16.38s best:11620750 next:[1220750,11620700] main
+#65     16.42s best:11570750 next:[1220750,11570700] main
+#66     16.47s best:11550800 next:[1220750,11550750] main
+#67     16.51s best:11550750 next:[1220750,11550700] main
+#68     16.55s best:11540800 next:[1220750,11540750] main
+#69     16.59s best:11540750 next:[1220750,11540700] main
+#70     16.64s best:10300750 next:[1220750,10300700] main
+#71     16.68s best:10290750 next:[1220750,10290700] main
+#72     16.85s best:10280750 next:[1220750,10280700] main
+#73     16.93s best:10270750 next:[1220750,10270700] main
+#74     16.97s best:10260750 next:[1220750,10260700] main
+#75     16.99s best:10230750 next:[1220750,10230700] main
+#76     17.02s best:10220750 next:[1220750,10220700] main
+#77     17.07s best:10120750 next:[1220750,10120700] main
+#78     17.11s best:10110750 next:[1220750,10110700] main
+#79     17.15s best:10090800 next:[1220750,10090750] main
+#80     17.18s best:10090750 next:[1220750,10090700] main
+#81     17.23s best:10000750 next:[1220750,10000700] main
+#82     17.34s best:9940750 next:[1220750,9940700] main
+#83     17.46s best:9920750 next:[1220750,9920700] main
+#84     17.51s best:9910800 next:[1220750,9910750] main
+#85     17.55s best:9910750 next:[1220750,9910700] main
+#86     17.60s best:9900750 next:[1220750,9900700] main
+#87     17.64s best:9890750 next:[1220750,9890700] main
+#88     17.69s best:9880750 next:[1220750,9880700] main
+#89     17.74s best:9870800 next:[1220750,9870750] main
+#90     17.78s best:9870750 next:[1220750,9870700] main
+#91     17.82s best:9860750 next:[1220750,9860700] main
+#92     18.10s best:9250750 next:[1220750,9250700] main
+#93     18.15s best:9150750 next:[1220750,9150700] main
+#94     18.18s best:9120750 next:[1220750,9120700] main
+#95     18.23s best:9020750 next:[1220750,9020700] main
+#96     18.26s best:8640750 next:[1220750,8640700] main
+#97     18.29s best:8050750 next:[1220750,8050700] main
+#98     18.31s best:8030750 next:[1220750,8030700] main
+#99     18.37s best:8020750 next:[1220750,8020700] main
+#100    18.40s best:7960750 next:[1220750,7960700] main
+#101    18.43s best:7950750 next:[1220750,7950700] main
+#102    18.45s best:7840750 next:[1220750,7840700] main
+#103    18.50s best:7830750 next:[1220750,7830700] main
+#104    18.54s best:7750750 next:[1220750,7750700] main
+#105    18.76s best:7740750 next:[1220750,7740700] main
+#106    19.01s best:7720800 next:[1220750,7720750] main
+#107    19.16s best:7660750 next:[1220750,7660700] main
+#108    19.20s best:7650750 next:[1220750,7650700] main
+#109    19.24s best:7610750 next:[1220750,7610700] main
+#110    19.28s best:7600750 next:[1220750,7600700] main
+#111    19.32s best:7590750 next:[1220750,7590700] main
+#112    19.37s best:7580750 next:[1220750,7580700] main
+#113    19.87s best:7570750 next:[1220750,7570700] main
+#114    19.89s best:7560800 next:[1220750,7560750] main
+#115    19.94s best:7540800 next:[1220750,7540750] main
+#116    19.96s best:7530800 next:[1220750,7530750] main
+#117    19.99s best:7530750 next:[1220750,7530700] main
+#118    20.04s best:7510750 next:[1220750,7510700] main
+#119    20.08s best:7500750 next:[1220750,7500700] main
+#120    20.14s best:7410750 next:[1220750,7410700] main
+#121    20.22s best:7400750 next:[1220750,7400700] main
+#122    20.60s best:7390750 next:[1220750,7390700] main
+#123    20.67s best:7380750 next:[1220750,7380700] main
+#124    20.68s best:7370750 next:[1220750,7370700] main
+#125    20.70s best:7350750 next:[1220750,7350700] main
+#126    20.73s best:7340750 next:[1220750,7340700] main
+#127    20.75s best:7330800 next:[1220750,7330750] main
+#128    20.77s best:7330750 next:[1220750,7330700] main
+#129    21.02s best:7320750 next:[1220750,7320700] main
+#130    21.09s best:7290750 next:[1220750,7290700] main
+#131    21.14s best:7280850 next:[1220750,7280800] main
+#132    21.17s best:7280800 next:[1220750,7280750] main
+#133    21.19s best:7280750 next:[1220750,7280700] main
+#134    21.22s best:7270800 next:[1220750,7270750] main
+#135    21.24s best:7270750 next:[1220750,7270700] main
+#136    21.28s best:7240750 next:[1220750,7240700] main
+#137    21.32s best:7230750 next:[1220750,7230700] main
+#138    21.35s best:7220750 next:[1220750,7220700] main
+#139    21.39s best:7210750 next:[1220750,7210700] main
+#140    21.42s best:7200750 next:[1220750,7200700] main
+#141    21.46s best:7190750 next:[1220750,7190700] main
+#142    21.49s best:7180800 next:[1220750,7180750] main
+#143    21.52s best:7180750 next:[1220750,7180700] main
+#144    21.59s best:5730750 next:[1220750,5730700] main
+#Bound  21.60s best:5730750 next:[1240750,5730700] main
+#145    21.63s best:5710750 next:[1240750,5710700] main
+#146    21.66s best:5700750 next:[1240750,5700700] main
+#147    36.29s best:5660750 next:[1240750,5660700] main
+#148    36.54s best:5560750 next:[1240750,5560700] main
+#149    36.78s best:5550750 next:[1240750,5550700] main
+#150    37.01s best:5520750 next:[1240750,5520700] main
+#151    37.08s best:5440750 next:[1240750,5440700] main
+#152    37.11s best:5420750 next:[1240750,5420700] main
+#153    37.15s best:5400750 next:[1240750,5400700] main
+#154    37.19s best:5390750 next:[1240750,5390700] main
+#155    37.22s best:5370750 next:[1240750,5370700] main
+#156    37.29s best:5360750 next:[1240750,5360700] main
+#157    37.32s best:5350750 next:[1240750,5350700] main
+#158    37.36s best:5300750 next:[1240750,5300700] main
+#159    37.40s best:5280750 next:[1240750,5280700] main
+#160    37.43s best:5270750 next:[1240750,5270700] main
+#161    38.17s best:5240750 next:[1240750,5240700] main
+#162    38.42s best:5230750 next:[1240750,5230700] main
+#163    38.65s best:5210750 next:[1240750,5210700] main
+#164    38.73s best:5110750 next:[1240750,5110700] main
+#165    38.78s best:5100750 next:[1240750,5100700] main
+#166    38.83s best:5090750 next:[1240750,5090700] main
+#167    38.86s best:5080750 next:[1240750,5080700] main
+#168    38.89s best:5030750 next:[1240750,5030700] main
+#169    38.92s best:5020750 next:[1240750,5020700] main
+#170    38.94s best:5010750 next:[1240750,5010700] main
+#171    38.97s best:5000750 next:[1240750,5000700] main
+#172    38.99s best:4990750 next:[1240750,4990700] main
+#173    39.03s best:4980750 next:[1240750,4980700] main
+#174    39.06s best:4910800 next:[1240750,4910750] main
+#175    39.10s best:4910750 next:[1240750,4910700] main
+#176    39.12s best:4900750 next:[1240750,4900700] main
+#177    39.15s best:4880800 next:[1240750,4880750] main
+#178    39.19s best:4880750 next:[1240750,4880700] main
+#179    39.22s best:4860750 next:[1240750,4860700] main
+#180    39.25s best:4830800 next:[1240750,4830750] main
+#181    39.43s best:4820750 next:[1240750,4820700] main
+#182    39.98s best:4370800 next:[1240750,4370750] main
+#183    40.24s best:4150750 next:[1240750,4150700] main
+#184    44.38s best:3690800 next:[1240750,3690750] main
+#185    44.57s best:3690750 next:[1240750,3690700] main
+#186    44.80s best:3130750 next:[1240750,3130700] main
+#187    44.82s best:3020750 next:[1240750,3020700] main
+#188    44.85s best:3010750 next:[1240750,3010700] main
+#189    44.89s best:3000750 next:[1240750,3000700] main
+#190    44.92s best:2960750 next:[1240750,2960700] main
+#191    44.94s best:2950750 next:[1240750,2950700] main
+#192    44.97s best:2710750 next:[1240750,2710700] main
+#193    44.99s best:2690750 next:[1240750,2690700] main
+#194    45.12s best:2680900 next:[1240750,2680850] main
+#195    45.14s best:2680750 next:[1240750,2680700] main
+#196    45.16s best:2600800 next:[1240750,2600750] main
+#197    45.18s best:2590800 next:[1240750,2590750] main
+#198    45.20s best:2550800 next:[1240750,2550750] main
+#199    45.22s best:2550750 next:[1240750,2550700] main
+#200    45.25s best:2540750 next:[1240750,2540700] main
+#201    45.28s best:2530800 next:[1240750,2530750] main
+#202    45.31s best:2530750 next:[1240750,2530700] main
+#203    45.47s best:2520800 next:[1240750,2520750] main
+#204    45.49s best:2520750 next:[1240750,2520700] main
+#205    45.51s best:2510750 next:[1240750,2510700] main
+#206    45.54s best:2490750 next:[1240750,2490700] main
+#207    45.56s best:2430750 next:[1240750,2430700] main
+#208    45.60s best:2420750 next:[1240750,2420700] main
+#209    45.65s best:2410750 next:[1240750,2410700] main
+#210    45.86s best:2400750 next:[1240750,2400700] main
+#211    45.89s best:2390750 next:[1240750,2390700] main
+#212    45.91s best:2380750 next:[1240750,2380700] main
+#213    45.93s best:2370750 next:[1240750,2370700] main
+#214    45.95s best:2360750 next:[1240750,2360700] main
+#215    45.99s best:2350750 next:[1240750,2350700] main
+#216    46.01s best:2340750 next:[1240750,2340700] main
+#217    46.03s best:2330750 next:[1240750,2330700] main
+#218    46.05s best:2320750 next:[1240750,2320700] main
+#219    46.07s best:2310750 next:[1240750,2310700] main
+#220    46.09s best:2300750 next:[1240750,2300700] main
+#221    46.12s best:2290750 next:[1240750,2290700] main
+#222    46.15s best:2280750 next:[1240750,2280700] main
+#223    46.17s best:2270750 next:[1240750,2270700] main
+#224    46.18s best:2260750 next:[1240750,2260700] main
+#225    46.20s best:2250750 next:[1240750,2250700] main
+#226    46.21s best:2240750 next:[1240750,2240700] main
+#227    46.24s best:2230750 next:[1240750,2230700] main
+#228    46.28s best:2220750 next:[1240750,2220700] main
+#229    46.29s best:2210750 next:[1240750,2210700] main
+#230    46.30s best:2200750 next:[1240750,2200700] main
+#231    46.32s best:2190750 next:[1240750,2190700] main
+#232    46.34s best:2140750 next:[1240750,2140700] main
+#233    46.35s best:2130750 next:[1240750,2130700] main
+#234    46.37s best:2120750 next:[1240750,2120700] main
+#235    46.40s best:2110750 next:[1240750,2110700] main
+#236    46.45s best:2100750 next:[1240750,2100700] main
+#237    46.48s best:2090750 next:[1240750,2090700] main
+#238    46.50s best:2080750 next:[1240750,2080700] main
+#239    46.53s best:2070750 next:[1240750,2070700] main
+#240    46.62s best:2040750 next:[1240750,2040700] main
+#241    46.71s best:2030750 next:[1240750,2030700] main
+#242    46.73s best:2020750 next:[1240750,2020700] main
+#243    46.76s best:2010750 next:[1240750,2010700] main
+#244    46.78s best:2000750 next:[1240750,2000700] main
+#245    46.82s best:1990750 next:[1240750,1990700] main
+#246    46.90s best:1980750 next:[1240750,1980700] main
+#247    46.93s best:1970800 next:[1240750,1970750] main
+#248    46.96s best:1970750 next:[1240750,1970700] main
+#249    46.99s best:1960750 next:[1240750,1960700] main
+#250    47.00s best:1950750 next:[1240750,1950700] main
+#251    47.03s best:1940750 next:[1240750,1940700] main
+#252    47.04s best:1920750 next:[1240750,1920700] main
+#253    47.07s best:1910750 next:[1240750,1910700] main
+#254    47.10s best:1900750 next:[1240750,1900700] main
+#255    47.12s best:1890750 next:[1240750,1890700] main
+#256    47.15s best:1880750 next:[1240750,1880700] main
+#257    47.21s best:1870750 next:[1240750,1870700] main
+#258    47.24s best:1860750 next:[1240750,1860700] main
+#259    47.33s best:1850750 next:[1240750,1850700] main
+#260    47.37s best:1840750 next:[1240750,1840700] main
+#261    47.38s best:1830750 next:[1240750,1830700] main
+#262    47.40s best:1820750 next:[1240750,1820700] main
+#263    47.42s best:1810750 next:[1240750,1810700] main
+#264    47.45s best:1800750 next:[1240750,1800700] main
+#265    47.75s best:1790750 next:[1240750,1790700] main
+#266    47.77s best:1780750 next:[1240750,1780700] main
+#267    47.79s best:1770750 next:[1240750,1770700] main
+#268    47.86s best:1760750 next:[1240750,1760700] main
+#269    47.94s best:1750750 next:[1240750,1750700] main
+#270    47.97s best:1740750 next:[1240750,1740700] main
+#271    47.98s best:1730750 next:[1240750,1730700] main
+#272    48.00s best:1720750 next:[1240750,1720700] main
+#273    48.04s best:1710750 next:[1240750,1710700] main
+#274    48.08s best:1700750 next:[1240750,1700700] main
+#275    48.15s best:1690750 next:[1240750,1690700] main
+#276    48.18s best:1680750 next:[1240750,1680700] main
+#277    48.20s best:1670750 next:[1240750,1670700] main
+#278    48.22s best:1660750 next:[1240750,1660700] main
+#279    48.25s best:1650750 next:[1240750,1650700] main
+#280    48.26s best:1640750 next:[1240750,1640700] main
+#281    48.28s best:1630750 next:[1240750,1630700] main
+#282    48.30s best:1620750 next:[1240750,1620700] main
+#283    48.32s best:1610750 next:[1240750,1610700] main
+#284    48.34s best:1600750 next:[1240750,1600700] main
+#285    48.38s best:1590750 next:[1240750,1590700] main
+#286    48.58s best:1580750 next:[1240750,1580700] main
+#287    49.07s best:1570750 next:[1240750,1570700] main
+#288    49.16s best:1560750 next:[1240750,1560700] main
+#289    49.19s best:1550750 next:[1240750,1550700] main
+#290    49.24s best:1540750 next:[1240750,1540700] main
+#291    49.26s best:1530750 next:[1240750,1530700] main
+#292    49.28s best:1520750 next:[1240750,1520700] main
+#293    49.30s best:1510750 next:[1240750,1510700] main
+#294    49.31s best:1500750 next:[1240750,1500700] main
+#295    49.34s best:1490750 next:[1240750,1490700] main
+#Bound  49.39s best:1490750 next:[1340750,1490700] main
+#Bound  49.43s best:1490750 next:[1440750,1490700] main
+#Done   49.44s main
+
+Task timing           n [     min,      max]      avg      dev     time         n [     min,      max]      avg      dev    dtime
+      'main':         1 [  49.10s,   49.10s]   49.10s   0.00ns   49.10s         1 [  28.56s,   28.56s]   28.56s   0.00ns   28.56s
+
+Search stats    Bools  Conflicts  Branches  Restarts  BacktrackToRoot  Backtrack  BoolPropag  IntegerPropag
+       'main':  5'145     71'559   614'336        22          125'628    335'656  32'329'181     48'333'653
+
+SAT formula    Fixed  Equiv  Total  VarLeft  BinaryClauses  PermanentClauses  TemporaryClauses
+      'main':  4'163    133  5'145      849        177'282             2'384             6'103
+
+SAT stats    ClassicMinim  LitRemoved  LitRemovedBinary  LitLearned  LitForgotten  Subsumed
+    'main':        66'797     903'317           191'133   7'182'592     5'535'069     7'742
+
+Vivification    Clauses  Decisions  LitTrue  Subsumed  LitRemoved  DecisionReused  Conflicts
+       'main':  109'586    202'484        4       238       1'748          53'932         29
+
+Clause deletion    at_true  l_and_not(l)  to_binary  sub_conflict  sub_extra  sub_decisions  sub_eager  sub_vivify  sub_probing  sub_inpro  blocked  eliminated  forgotten  promoted  conflicts
+          'main':    1'918           287        339         7'399        162              4        343         238        2'337         80        0           0     53'443   178'326     71'559
+
+Lp stats    Component  Iterations  AddedCuts  OPTIMAL  DUAL_F.  DUAL_U.
+   'main':          1     547'124        151  110'810        0   10'259
+
+Lp dimension      Final dimension of first component
+       'main':  147 rows, 4885 columns, 1667 entries
+
+Lp debug    CutPropag  CutEqPropag  Adjust  Overflow    Bad  BadScaling
+   'main':          0            0  48'596         0  7'915           0
+
+Lp pool    Constraints  Updates  Simplif  Merged  Shortened  Split  Strengthened  Cuts/Call
+  'main':        3'489       14  157'368       0      4'567      0             0    151/387
+
+Lp Cut           main
+         CG_FF:    19
+          CG_R:     1
+            IB:    42
+  ZERO_HALF_FF:    75
+   ZERO_HALF_K:     2
+   ZERO_HALF_R:    12
+
+Solutions (295)    Num     Rank
+          'main':  590  [0,295]
+
+Objective bounds     Num
+  'initial_domain':    1
+            'main':    6
+
+Solution repositories    Added  Queried  Synchro
+    'alternative_path':      1        0        1
+      'best_solutions':    295        0      295
+   'fj solution hints':      0        0        0
+
+LRAT_status: NA
+CpSolverResponse summary:
+status: OPTIMAL
+objective: 1490750
+best_bound: 1490750
+integers: 5196
+booleans: 5145
+conflicts: 71559
+branches: 614336
+propagations: 32329181
+integer_propagations: 48333653
+restarts: 22
+lp_iterations: 547124
+walltime: 49.4531
+usertime: 49.4531
+deterministic_time: 28.679
+gap_integral: 0
+solution_fingerprint: 0xb30aba1959da7e95
+
+Solver Status: OPTIMAL
+Warning: 4 staff assigned on 2026-05-04
+  夜勤配置数: 94件
+
+  前月の夜勤実績(申請より): 15件 -> 統合
+📅 今月の公休目標: 10日
+
+🌅 公休先行配置（Phase 1）実行中...
+    T023: クリティカル日1日をスキップ
+    T024: クリティカル日2日をスキップ
+    T048: クリティカル日1日をスキップ
+    T049: クリティカル日1日をスキップ
+    T050: クリティカル日1日をスキップ
+    T051: クリティカル日1日をスキップ
+    T052: クリティカル日1日をスキップ
+    T053: クリティカル日1日をスキップ
+    T054: クリティカル日1日をスキップ
+    T057: クリティカル日1日をスキップ
+    T058: クリティカル日1日をスキップ
+    T059: クリティカル日1日をスキップ
+    T060: クリティカル日1日をスキップ
+    T061: クリティカル日1日をスキップ
+    T005: クリティカル日1日をスキップ
+    T063: クリティカル日1日をスキップ
+    T064: クリティカル日1日をスキップ
+    T065: クリティカル日1日をスキップ
+  事前公休割り当て: 102件
+
+☀️ 日勤スケジューリング実行中（研修なし）...
+Scheduling Day: 2026-05-01
+Scheduling Day: 2026-05-02
+Scheduling Day: 2026-05-03
+Scheduling Day: 2026-05-04
+Scheduling Day: 2026-05-05
+Scheduling Day: 2026-05-06
+Scheduling Day: 2026-05-07
+Scheduling Day: 2026-05-08
+Scheduling Day: 2026-05-09
+Scheduling Day: 2026-05-10
+Scheduling Day: 2026-05-11
+Scheduling Day: 2026-05-12
+Scheduling Day: 2026-05-13
+Scheduling Day: 2026-05-14
+Scheduling Day: 2026-05-15
+Scheduling Day: 2026-05-16
+Scheduling Day: 2026-05-17
+Scheduling Day: 2026-05-18
+Scheduling Day: 2026-05-19
+Scheduling Day: 2026-05-20
+Scheduling Day: 2026-05-21
+Scheduling Day: 2026-05-22
+Scheduling Day: 2026-05-23
+Scheduling Day: 2026-05-24
+Scheduling Day: 2026-05-25
+Scheduling Day: 2026-05-26
+Scheduling Day: 2026-05-27
+Scheduling Day: 2026-05-28
+Scheduling Day: 2026-05-29
+Scheduling Day: 2026-05-30
+Scheduling Day: 2026-05-31
+  日勤配置数: 878件
+
+📅 10日公休付与中...
+  (i) T001(加藤　光久): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T002(石川　和弥): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T003(矢野　昌男): 固定公休(16日)が目標(10日)を超過しています。
+  (i) T009(佐藤　和彦): 固定公休(13日)が目標(10日)を超過しています。
+  (i) T010(川向　克茂): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T011(渡邉　一博): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T012(須田　章則): 固定公休(14日)が目標(10日)を超過しています。
+  (i) T013(永井　基博): 固定公休(13日)が目標(10日)を超過しています。
+  (i) T015(池谷　尚人): 固定公休(13日)が目標(10日)を超過しています。
+  (i) T017(白倉　知明): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T018(増田　翔太): 固定公休(13日)が目標(10日)を超過しています。
+  (i) T019(小川　龍史): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T020(清水　万慈): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T021(橋本　圭市): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T022(原田　勝人): 固定公休(28日)が目標(10日)を超過しています。
+  (i) T024(石井　哲也): 固定公休(13日)が目標(10日)を超過しています。
+  (i) T025(森　拓磨): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T026(川名　佑樹): 固定公休(13日)が目標(10日)を超過しています。
+  (i) T029(佐藤　海夢): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T031(嶋田　帆波): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T032(細谷　祐太): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T033(大村　直輝): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T034(星　和馬): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T035(細谷　菜々): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T037(松井　芙美佳): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T039(斎藤　来夢): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T040(宮野　拓也): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T043(田﨑　来実): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T044(平野　裕理): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T047(鈴木　りんか): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T048(髙谷　ひな): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T052(藤井　華帆): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T055(畠山　秀人): 固定公休(11日)が目標(10日)を超過しています。
+  (i) T056(友邉　和哉): 固定公休(12日)が目標(10日)を超過しています。
+  (i) T066(遠藤　健太郎): 固定公休(11日)が目標(10日)を超過しています。
+✅ 10日公休処理: 1件の自動休を追加 (0件の研修割当を休に変更) - 0名に計0日の代休を付与
+
+📞 拘束（オンコール）自動配置中...
+  拘束割り当て完了
+
+🔍 最終検証・エラーレポート作成中...
+  ⚠️ 32件の警告が発生しました
+📊 Excel生成中...
+✓ 勤務表を保存: output/勤務表_2026年5月.xlsx
+
+======================================================================
+✅ 勤務表作成完了
+======================================================================

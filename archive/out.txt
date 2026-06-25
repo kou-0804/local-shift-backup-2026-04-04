@@ -1,0 +1,693 @@
+======================================================================
+勤務表作成システム - 2026年5月
+======================================================================
+
+📂 データ読み込み中...
+Loading Night Skill Overrides from shift_scheduler/data/夜勤スキル一覧.csv
+Loading generic request file: shift_scheduler/data/予定申請.csv
+Detected 'HolidaySymbol' format in 予定申請_202605.csv
+  夜勤回数データ: 35名分
+  育成・業務拡大ルール: 5件ロードしました
+  技師: 66名
+  勤務場所: 22箇所
+  予定申請: 272件
+
+🌙 夜勤スキル導出中...
+  MRスキル: 19名
+  アンギオスキル: 13名
+  心カテスキル: 19名
+
+🔙 前月の夜勤実績を確認中...
+  前月の夜勤実績: 15件 -> 統合
+🌙 夜勤スケジューリング実行中...
+
+Starting CP-SAT solver v9.15.6755
+Parameters: max_time_in_seconds: 60 log_search_progress: true
+Setting number of workers to 8
+
+Initial optimization model '': (model_fingerprint: 0xd1e75716e8c09edb)
+#Variables: 9'063 (#bools: 7'651 #ints: 294 in objective) (8'577 primary variables)
+  - 8'769 Booleans in [0,1]
+  - 31 in [0,3]
+  - 38 in [0,5]
+  - 190 in [0,7]
+  - 35 in [0,31]
+#kBoolAnd: 6'270 (#enforced: 6'270) (#literals: 18'810)
+#kBoolOr: 6'270 (#enforced: 6'270) (#literals: 12'540)
+#kLinMax: 35 (#expressions: 70)
+#kLinear1: 263 (#enforced: 72)
+#kLinear2: 1'140
+#kLinear3: 2'204 (#enforced: 2'204)
+#kLinearN: 863 (#enforced: 366) (#terms: 8'894)
+
+Starting presolve at 0.01s
+  1.88e-03s  0.00e+00d  [DetectDominanceRelations] 
+  1.97e-02s  0.00e+00d  [PresolveToFixPoint] #num_loops=3 #num_dual_strengthening=2 
+  2.17e-04s  0.00e+00d  [ExtractEncodingFromLinear] 
+  3.42e-04s  0.00e+00d  [DetectDuplicateColumns] 
+  1.64e-03s  0.00e+00d  [DetectDuplicateConstraints] #duplicates=111 
+[Symmetry] Graph for symmetry has 34'528 nodes and 85'791 arcs.
+[Symmetry] Symmetry computation done. time: 0.004971 dtime: 0.011865
+[Symmetry] #generators: 8, average support size: 60.5
+[Symmetry] 242 orbits on 484 variables with sizes: 2,2,2,2,2,2,2,2,2,2,...
+[Symmetry] Found orbitope of size 1 x 2
+[SAT presolve] num removable Booleans: 0 / 6'881
+[SAT presolve] num trivial clauses: 0
+[SAT presolve] [0s] clauses:22'634 literals:65'220 vars:6'731 one_side_vars:6 simple_definition:4'864 singleton_clauses:0
+[SAT presolve] [0.00144s] clauses:18'324 literals:43'007 vars:6'726 one_side_vars:929 simple_definition:4'779 singleton_clauses:0
+[SAT presolve] [0.001837s] clauses:18'324 literals:43'007 vars:6'726 one_side_vars:929 simple_definition:4'779 singleton_clauses:0
+  1.42e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] #without_enforcements=75 
+  4.48e-02s  3.78e-02d  [Probe] #probed=11'980 #fixed_bools=928 #new_bounds=35 #equiv=850 #new_binary_clauses=3'740 
+  7.00e-03s  9.19e-03d  [MaxClique] Merged 13'448 constraints with 26'896 literals into 8'551 constraints with 20'299 literals
+  1.66e-03s  0.00e+00d  [DetectDominanceRelations] 
+  8.87e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=3 #num_dual_strengthening=2 
+  1.84e-03s  0.00e+00d  [ProcessAtMostOneAndLinear] #num_changes=3 
+  1.50e-03s  0.00e+00d  [DetectDuplicateConstraints] #duplicates=850 
+  1.36e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  5.70e-04s  1.86e-05d  [DetectDominatedLinearConstraints] #relevant_constraints=467 #num_inclusions=223 
+  2.23e-04s  0.00e+00d  [DetectDifferentVariables] 
+  3.30e-03s  1.81e-04d  [ProcessSetPPC] #relevant_constraints=11'212 #num_inclusions=3'254 
+  1.96e-03s  2.65e-04d  [TransformClausesToExactlyOne] #num_amos=6'694 #num_clauses=4'054 #num_checked=4'054 
+  6.41e-04s  0.00e+00d  [DetectEncodedComplexDomains] 
+  9.60e-05s  0.00e+00d  [FindAlmostIdenticalLinearConstraints] 
+  1.47e-03s  1.28e-03d  [FindBigAtMostOneAndLinearOverlap] 
+  6.40e-04s  4.95e-04d  [FindBigVerticalLinearOverlap] 
+  2.13e-04s  2.04e-05d  [FindBigHorizontalLinearOverlap] #linears=454 
+  8.25e-04s  6.82e-05d  [MergeClauses] 
+  2.31e-03s  0.00e+00d  [DetectDominanceRelations] 
+  1.54e-03s  0.00e+00d  [DetectDominanceRelations] 
+  1.09e-02s  0.00e+00d  [PresolveToFixPoint] #num_loops=4 #num_dual_strengthening=2 
+  1.72e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.67e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  3.61e-04s  0.00e+00d  [DetectDuplicateColumns] 
+  1.27e-03s  0.00e+00d  [DetectDuplicateConstraints] 
+[Symmetry] Graph for symmetry has 22'514 nodes and 42'132 arcs.
+[Symmetry] Symmetry computation done. time: 0.003863 dtime: 0.0065476
+[Symmetry] #generators: 1, average support size: 348
+[Symmetry] 174 orbits on 348 variables with sizes: 2,2,2,2,2,2,2,2,2,2,...
+[SAT presolve] num removable Booleans: 0 / 5'051
+[SAT presolve] num trivial clauses: 0
+[SAT presolve] [0s] clauses:7'662 literals:20'863 vars:4'976 one_side_vars:2314 simple_definition:1'736 singleton_clauses:0
+[SAT presolve] [0.000518s] clauses:7'662 literals:20'863 vars:4'976 one_side_vars:2314 simple_definition:1'736 singleton_clauses:0
+[SAT presolve] [0.000836s] clauses:7'662 literals:20'863 vars:4'976 one_side_vars:2314 simple_definition:1'736 singleton_clauses:0
+  1.47e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  4.08e-02s  2.77e-02d  [Probe] #probed=11'932 #new_binary_clauses=1'683 
+  4.98e-03s  8.11e-03d  [MaxClique] 
+  1.44e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.21e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  1.47e-03s  0.00e+00d  [ProcessAtMostOneAndLinear] 
+  1.19e-03s  0.00e+00d  [DetectDuplicateConstraints] 
+  1.11e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  2.37e-04s  1.85e-05d  [DetectDominatedLinearConstraints] #relevant_constraints=464 #num_inclusions=223 
+  1.26e-04s  0.00e+00d  [DetectDifferentVariables] 
+  2.01e-03s  1.81e-04d  [ProcessSetPPC] #relevant_constraints=11'212 #num_inclusions=3'254 
+  1.38e-03s  2.65e-04d  [TransformClausesToExactlyOne] #num_amos=6'694 #num_clauses=4'056 #num_checked=4'056 
+  1.39e-04s  0.00e+00d  [DetectEncodedComplexDomains] 
+  9.20e-05s  0.00e+00d  [FindAlmostIdenticalLinearConstraints] 
+  1.43e-03s  1.28e-03d  [FindBigAtMostOneAndLinearOverlap] 
+  6.12e-04s  4.94e-04d  [FindBigVerticalLinearOverlap] 
+  1.73e-04s  2.04e-05d  [FindBigHorizontalLinearOverlap] #linears=454 
+  7.97e-04s  6.83e-05d  [MergeClauses] 
+  1.49e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.02e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  1.49e-03s  0.00e+00d  [DetectDominanceRelations] 
+  4.93e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  3.15e-04s  0.00e+00d  [DetectDuplicateColumns] 
+  1.22e-03s  0.00e+00d  [DetectDuplicateConstraints] 
+[Symmetry] Graph for symmetry has 22'508 nodes and 42'117 arcs.
+[Symmetry] Symmetry computation done. time: 0.003176 dtime: 0.00655046
+[Symmetry] #generators: 1, average support size: 348
+[Symmetry] 174 orbits on 348 variables with sizes: 2,2,2,2,2,2,2,2,2,2,...
+[SAT presolve] num removable Booleans: 0 / 5'051
+[SAT presolve] num trivial clauses: 0
+[SAT presolve] [0s] clauses:7'662 literals:20'863 vars:4'976 one_side_vars:2314 simple_definition:1'736 singleton_clauses:0
+[SAT presolve] [0.00037s] clauses:7'662 literals:20'863 vars:4'976 one_side_vars:2314 simple_definition:1'736 singleton_clauses:0
+[SAT presolve] [0.000675s] clauses:7'662 literals:20'863 vars:4'976 one_side_vars:2314 simple_definition:1'736 singleton_clauses:0
+  1.39e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  3.59e-02s  2.77e-02d  [Probe] #probed=11'932 #new_binary_clauses=1'683 
+  5.75e-03s  8.11e-03d  [MaxClique] 
+  1.68e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.82e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  1.45e-03s  0.00e+00d  [ProcessAtMostOneAndLinear] 
+  1.35e-03s  0.00e+00d  [DetectDuplicateConstraints] 
+  1.14e-03s  0.00e+00d  [DetectDuplicateConstraintsWithDifferentEnforcements] 
+  2.85e-04s  1.85e-05d  [DetectDominatedLinearConstraints] #relevant_constraints=461 #num_inclusions=223 
+  1.76e-04s  0.00e+00d  [DetectDifferentVariables] 
+  2.06e-03s  1.81e-04d  [ProcessSetPPC] #relevant_constraints=11'209 #num_inclusions=3'254 
+  1.51e-03s  2.65e-04d  [TransformClausesToExactlyOne] #num_amos=6'694 #num_clauses=4'056 #num_checked=4'056 
+  1.91e-04s  0.00e+00d  [DetectEncodedComplexDomains] 
+  1.42e-04s  0.00e+00d  [FindAlmostIdenticalLinearConstraints] 
+  1.41e-03s  1.28e-03d  [FindBigAtMostOneAndLinearOverlap] 
+  6.01e-04s  4.94e-04d  [FindBigVerticalLinearOverlap] 
+  2.19e-04s  2.04e-05d  [FindBigHorizontalLinearOverlap] #linears=454 
+  8.75e-04s  6.83e-05d  [MergeClauses] 
+  1.67e-03s  0.00e+00d  [DetectDominanceRelations] 
+  5.38e-03s  0.00e+00d  [PresolveToFixPoint] #num_loops=1 #num_dual_strengthening=1 
+  1.31e-04s  0.00e+00d  [MergeNoOverlap] 
+  1.47e-04s  0.00e+00d  [MergeNoOverlap2D] 
+  8.92e-04s  0.00e+00d  [ExpandObjective] 
+
+Presolve summary:
+  - 888 affine relations were detected.
+  - rule 'TODO dual: add implied bound' was applied 16 times.
+  - rule 'TODO dual: only one blocking constraint?' was applied 50'625 times.
+  - rule 'TODO dual: only one blocking enforced constraint?' was applied 1'066 times.
+  - rule 'TODO dual: only one unspecified blocking constraint?' was applied 2'849 times.
+  - rule 'TODO duplicate: duplicate columns in Boolean constraints' was applied 8 times.
+  - rule 'TODO lin_max: linear expression above max' was applied 315 times.
+  - rule 'affine: new relation' was applied 888 times.
+  - rule 'at_most_one: removed literals' was applied 1'857 times.
+  - rule 'at_most_one: size one' was applied 1'884 times.
+  - rule 'at_most_one: transformed into max clique' was applied 1 time.
+  - rule 'bool and: always false' was applied 1'445 times.
+  - rule 'bool_and: x => x' was applied 72 times.
+  - rule 'bool_or: always true' was applied 1'445 times.
+  - rule 'bool_or: implications' was applied 1'038 times.
+  - rule 'bool_or: only one literal' was applied 1'697 times.
+  - rule 'bool_or: removed enforcement literal' was applied 6'819 times.
+  - rule 'deductions: 691 stored' was applied 1 time.
+  - rule 'domination: in exactly one' was applied 27 times.
+  - rule 'dual: enforced equivalence' was applied 36 times.
+  - rule 'dual: fix variable' was applied 75 times.
+  - rule 'dual: reduced domain' was applied 202 times.
+  - rule 'duplicate: removed constraint' was applied 961 times.
+  - rule 'duplicate: removed enforced constraint' was applied 75 times.
+  - rule 'enforcement: false literal' was applied 75 times.
+  - rule 'enforcement: true literal' was applied 111 times.
+  - rule 'exactly_one: removed literals' was applied 27 times.
+  - rule 'exactly_one: singleton' was applied 27 times.
+  - rule 'exactly_one: size two' was applied 1 time.
+  - rule 'lin_max: target domain reduced' was applied 35 times.
+  - rule 'linear + amo: extracted enforcement literal' was applied 33 times.
+  - rule 'linear + amo: fixed literal implied by enforcement' was applied 28 times.
+  - rule 'linear1: x in domain' was applied 161 times.
+  - rule 'linear2: convert ax + by != cte to clauses' was applied 1'073 times.
+  - rule 'linear2: implied ax + by = cte has only one solution' was applied 8 times.
+  - rule 'linear2: infeasible relation' was applied 111 times.
+  - rule 'linear: always true' was applied 338 times.
+  - rule 'linear: empty' was applied 93 times.
+  - rule 'linear: fixed or dup variables' was applied 244 times.
+  - rule 'linear: negative clause' was applied 8 times.
+  - rule 'linear: negative reified and' was applied 31 times.
+  - rule 'linear: positive clause' was applied 124 times.
+  - rule 'linear: positive reified and' was applied 1 time.
+  - rule 'linear: reduced variable domains' was applied 1 time.
+  - rule 'linear: small Boolean expression' was applied 1'688 times.
+  - rule 'linear: tightened into equality' was applied 11 times.
+  - rule 'linear: variable substitution 0' was applied 10 times.
+  - rule 'new_bool: integer encoding' was applied 83 times.
+  - rule 'objective: variable not used elsewhere' was applied 41 times.
+  - rule 'presolve: 2902 unused variables removed.' was applied 1 time.
+  - rule 'presolve: iteration' was applied 3 times.
+  - rule 'variables: add encoding constraint' was applied 83 times.
+  - rule 'variables: only used in objective and in encodings' was applied 28 times.
+  - rule 'variables: reduce domain to encoded values' was applied 1 time.
+
+Presolved optimization model '': (model_fingerprint: 0xc39897d2fcdd7edb)
+#Variables: 5'291 (#bools: 4'132 #ints: 240 in objective) (5'022 primary variables)
+  - 5'051 Booleans in [0,1]
+  - 2 in [0,2]
+  - 50 in [0,3]
+  - 34 in [0,4]
+  - 21 in [0,5]
+  - 98 in [0,6]
+  - 1 in [0,13]
+  - 2 in [0,15]
+  - 1 in [0,17]
+  - 1 in [0,18]
+  - 1 in [0,20]
+  - 4 in [0,21]
+  - 2 in [0,22]
+  - 8 in [0,23]
+  - 3 in [0,24]
+  - 2 in [0,25]
+  - 2 in [0,26]
+  - 6 in [0,27]
+  - 1 in [0,28]
+  - 1 in [0,29]
+#kAtMostOne: 3'088 (#literals: 9'373)
+#kBoolAnd: 1'900 (#enforced: 1'900) (#literals: 5'506)
+#kBoolOr: 4'056 (#literals: 13'651)
+#kLinMax: 35 (#expressions: 70)
+#kLinear3: 2 (#enforced: 2)
+#kLinearN: 458 (#enforced: 151) (#terms: 4'104)
+[Symmetry] Graph for symmetry has 18'649 nodes and 42'107 arcs.
+[Symmetry] Symmetry computation done. time: 0.002643 dtime: 0.00630371
+[Symmetry] #generators: 1, average support size: 348
+[Symmetry] 174 orbits on 348 variables with sizes: 2,2,2,2,2,2,2,2,2,2,...
+
+Preloading model.
+#Bound   0.36s best:inf   next:[220050,1.2053725e+09] initial_domain
+#Model   0.36s var:5291/5291 constraints:9539/9539
+
+Starting search at 0.36s with 8 workers.
+6 full problem subsolvers: [core, default_lp, max_lp_sym, no_lp, quick_restart, reduced_costs]
+2 first solution subsolvers: [fj, fs_random_no_lp]
+9 interleaved subsolvers: [feasibility_pump, graph_arc_lns, graph_cst_lns, graph_dec_lns, graph_var_lns, ls, rins/rens, rnd_cst_lns, rnd_var_lns]
+3 helper subsolvers: [neighborhood_helper, synchronization_agent, update_gap_integral]
+
+#1       0.38s best:153040750 next:[220050,153040700] fj_restart(batch:1 lin{mvs:155 evals:1'334} #w_updates:4 #perturb:0)
+#Bound   0.43s best:153040750 next:[220200,153040700] default_lp (initial_propagation)
+#2       0.43s best:28830750 next:[220200,28830700] core
+#Bound   0.46s best:28830750 next:[240200,28830700] reduced_costs
+#Bound   0.50s best:28830750 next:[240300,28830700] reduced_costs
+#3       0.52s best:28630750 next:[240300,28630700] core
+#4       0.52s best:21510750 next:[240300,21510700] core
+#5       0.53s best:18340750 next:[240300,18340700] core
+#Bound   0.54s best:18340750 next:[250400,18340700] reduced_costs
+#6       0.56s best:2840750 next:[250400,2840700] core
+#Bound   0.60s best:2840750 next:[370750,2840700] max_lp_sym
+#Bound   0.60s best:2840750 next:[440200,2840700] bool_core (num_cores=1 [size:22 mw:4000 d:5] a=3254 d=5 fixed=1274/5334 clauses=4'335)
+#Model   0.62s var:4017/5291 constraints:7263/9539 compo:3982,1,1,1,1,1,1,1,1,1,...
+#7       0.63s best:2450750 next:[440200,2450700] core
+#Bound   0.66s best:2450750 next:[540200,2450700] bool_core (num_cores=2 [size:8 mw:2000 d:6] a=3249 d=6 fixed=1277/5374 clauses=4'426)
+#8       0.67s best:1370750 next:[540200,1370700] core
+#9       0.67s best:930750 next:[540200,930700] core
+#10      0.67s best:850750 next:[540200,850700] core
+#11      0.67s best:680750 next:[540200,680700] core
+#Bound   0.72s best:680750 next:[560200,680700] bool_core (num_cores=3 [size:7 mw:400 d:6] a=2013 d=6 fixed=2696/5406 clauses=5'332)
+#12      0.72s best:660750 next:[560200,660700] core
+#Bound   0.72s best:660750 next:[570200,660700] bool_core (num_cores=4 [size:5 mw:200 exo] a=1600 d=6 fixed=3211/5413 clauses=5'353)
+#Model   0.72s var:2114/5291 constraints:4566/9539 compo:2037,1,1,1,1,1,1,1,1,1,...
+#Bound   0.73s best:660750 next:[580200,660700] bool_core (num_cores=5 [size:8 mw:200 amo:1 lit:7 d:2] a=1525 d=6 fixed=3223/5414 clauses=5'360)
+#Model   0.74s var:2102/5291 constraints:4539/9539 compo:2025,1,1,1,1,1,1,1,1,1,...
+#Bound   0.74s best:660750 next:[590200,660700] bool_core (num_cores=6 [size:14 mw:200 amo:3 lit:8 d:6] a=1514 d=6 fixed=3226/5425 clauses=5'429)
+#13      0.74s best:590750 next:[590200,590700] core
+#Bound   0.74s best:590750 next:[590250,590700] bool_core (num_cores=7 [size:1 mw:1] a=42 d=6 fixed=4831/5433 clauses=5'529)
+#Bound   0.75s best:590750 next:[590300,590700] bool_core (num_cores=8 [size:7 mw:1 d:3] a=35 d=6 fixed=4834/5438 clauses=5'587)
+#Bound   0.75s best:590750 next:[590350,590700] bool_core (num_cores=9 [size:4 mw:1 d:2] a=32 d=6 fixed=4836/5447 clauses=5'628)
+#Bound   0.76s best:590750 next:[590400,590700] bool_core (num_cores=10 [size:4 mw:1 d:3] a=29 d=6 fixed=4837/5452 clauses=5'646)
+#Bound   0.76s best:590750 next:[590450,590700] bool_core (num_cores=11 [size:7 mw:1 amo:1 lit:2 d:4] a=23 d=6 fixed=4837/5463 clauses=5'695)
+#Bound   0.76s best:590750 next:[590500,590700] bool_core (num_cores=12 [size:6 mw:1 amo:1 lit:2 d:5] a=18 d=6 fixed=4837/5483 clauses=5'758)
+#Model   0.76s var:563/5291 constraints:2462/9539 compo:554,1,1,1,1,1,1,1,1,1
+#Bound   0.77s best:590750 next:[590550,590700] bool_core (num_cores=13 [size:4 mw:1 d:6] a=15 d=6 fixed=4837/5514 clauses=6'299)
+#Model   0.83s var:559/5291 constraints:2441/9539 compo:550,1,1,1,1,1,1,1,1,1
+#Model   0.85s var:554/5291 constraints:2419/9539 compo:545,1,1,1,1,1,1,1,1,1
+#Bound   0.85s best:590750 next:[590600,590700] bool_core (num_cores=14 [size:2 mw:1 d:7] a=14 d=7 fixed=4847/5544 clauses=9'435)
+#Model   0.87s var:552/5291 constraints:2406/9539 compo:543,1,1,1,1,1,1,1,1,1
+#Model   0.89s var:551/5291 constraints:2396/9539 compo:542,1,1,1,1,1,1,1,1,1
+#Model   0.89s var:550/5291 constraints:2385/9539 compo:541,1,1,1,1,1,1,1,1,1
+#Model   0.90s var:548/5291 constraints:2376/9539 compo:538,1,1,1,1,1,1,1,1,1,...
+#Done    0.93s reduced_costs
+
+Task timing                   n [     min,      max]      avg      dev     time         n [     min,      max]      avg      dev    dtime
+              'core':         1 [571.63ms, 571.63ms] 571.63ms   0.00ns 571.63ms         2 [ 30.85ms, 412.66ms] 221.75ms 190.91ms 443.51ms
+        'default_lp':         1 [571.63ms, 571.63ms] 571.63ms   0.00ns 571.63ms         2 [ 32.12ms, 175.30ms] 103.71ms  71.59ms 207.42ms
+  'feasibility_pump':         2 [ 13.78ms,  15.35ms]  14.56ms 783.00us  29.12ms         1 [ 14.91ms,  14.91ms]  14.91ms   0.00ns  14.91ms
+                'fj':         1 [  4.15ms,   4.15ms]   4.15ms   0.00ns   4.15ms         1 [761.09us, 761.09us] 761.09us   0.00ns 761.09us
+   'fs_random_no_lp':         1 [ 21.18ms,  21.18ms]  21.18ms   0.00ns  21.18ms         1 [  4.24ms,   4.24ms]   4.24ms   0.00ns   4.24ms
+     'graph_arc_lns':         2 [ 11.10ms, 118.06ms]  64.58ms  53.48ms 129.16ms         2 [  5.53ms,  16.61ms]  11.07ms   5.54ms  22.14ms
+     'graph_cst_lns':         2 [ 12.63ms,  88.58ms]  50.61ms  37.97ms 101.21ms         2 [474.20us,   1.22ms] 846.46us 372.26us   1.69ms
+     'graph_dec_lns':         2 [  1.18ms,   6.97ms]   4.08ms   2.90ms   8.16ms         2 [ 10.00ns,   3.93us]   1.97us   1.96us   3.94us
+     'graph_var_lns':         1 [323.41ms, 323.41ms] 323.41ms   0.00ns 323.41ms         1 [100.00ms, 100.00ms] 100.00ms   0.00ns 100.00ms
+                'ls':         2 [ 45.27ms,  76.99ms]  61.13ms  15.86ms 122.27ms         2 [ 78.17ms, 100.10ms]  89.13ms  10.96ms 178.27ms
+        'max_lp_sym':         1 [571.57ms, 571.57ms] 571.57ms   0.00ns 571.57ms         2 [183.33ms, 273.71ms] 228.52ms  45.19ms 457.04ms
+             'no_lp':         1 [571.58ms, 571.58ms] 571.58ms   0.00ns 571.58ms         2 [ 30.85ms, 361.85ms] 196.35ms 165.50ms 392.70ms
+     'quick_restart':         1 [571.51ms, 571.51ms] 571.51ms   0.00ns 571.51ms         2 [ 32.29ms, 244.77ms] 138.53ms 106.24ms 277.06ms
+     'reduced_costs':         1 [567.11ms, 567.11ms] 567.11ms   0.00ns 567.11ms         2 [ 32.06ms, 331.11ms] 181.58ms 149.52ms 363.16ms
+         'rins/rens':         3 [  4.30ms,  54.91ms]  29.88ms  20.67ms  89.64ms         2 [  2.58ms,  18.62ms]  10.60ms   8.02ms  21.20ms
+       'rnd_cst_lns':         1 [229.40ms, 229.40ms] 229.40ms   0.00ns 229.40ms         1 [100.00ms, 100.00ms] 100.00ms   0.00ns 100.00ms
+       'rnd_var_lns':         2 [  3.99ms,  60.16ms]  32.08ms  28.09ms  64.16ms         2 [ 13.49us,  14.17ms]   7.09ms   7.08ms  14.19ms
+
+Search stats          Bools  Conflicts  Branches  Restarts  BacktrackToRoot  Backtrack  BoolPropag  IntegerPropag
+             'core':  5'574      7'526   115'207         2           18'889     36'714   1'561'986      1'257'662
+       'default_lp':  5'109        370    44'303         1           18'224     28'663     524'136        673'114
+  'fs_random_no_lp':  5'051          0     2'066         0            2'066      2'066      25'084         28'033
+       'max_lp_sym':  5'086          7    12'048         0           10'789     11'339     181'392        206'083
+            'no_lp':  5'282      5'667    63'685         2           18'243     33'957   1'434'633      2'043'842
+    'quick_restart':  5'277         79    27'366         4           15'538     22'344     905'051      1'407'451
+    'reduced_costs':  5'115         79    35'638         1           18'263     28'367     493'655        736'237
+
+SAT formula           Fixed  Equiv  Total  VarLeft  BinaryClauses  PermanentClauses  TemporaryClauses
+             'core':  4'850      0  5'574      724          9'250             1'553             3'926
+       'default_lp':  4'559      0  5'109      550         30'604             4'076               247
+  'fs_random_no_lp':      0      0  5'051    5'051         25'086             4'056                 0
+       'max_lp_sym':  4'526      8  5'086      552          7'510                63                 0
+            'no_lp':  1'271      0  5'282    4'011         21'934             4'085             3'686
+    'quick_restart':  4'713    144  5'277      420         79'244             2'583                 0
+    'reduced_costs':  4'566      0  5'115      549         30'106             4'044                33
+
+SAT stats             ClassicMinim  LitRemoved  LitRemovedBinary  LitLearned  LitForgotten  Subsumed
+             'core':         5'296      33'195            12'505     172'864             0     1'792
+       'default_lp':           266         871               292      17'656             0        69
+  'fs_random_no_lp':             0           0                 0           0             0         0
+       'max_lp_sym':             0           0                10          21             0         1
+            'no_lp':         5'250      88'058             1'628     354'657             0     1'890
+    'quick_restart':            14          51                59         191             0         5
+    'reduced_costs':            28         117                64         924             0        11
+
+Vivification          Clauses  Decisions  LitTrue  Subsumed  LitRemoved  DecisionReused  Conflicts
+             'core':    8'104     15'167        0        29          88           4'025          0
+       'default_lp':    8'087     15'098        0        29          87           4'055          0
+  'fs_random_no_lp':        0          0        0         0           0               0          0
+       'max_lp_sym':      127        796        0         3          11              22          0
+            'no_lp':    8'096     15'124        0        29          87           4'058          0
+    'quick_restart':    5'126      9'137        0         4          24           2'603          4
+    'reduced_costs':    8'086     15'120        0        29          96           4'035          0
+
+Clause deletion       at_true  l_and_not(l)  to_binary  sub_conflict  sub_extra  sub_decisions  sub_eager  sub_vivify  sub_probing  sub_inpro  blocked  eliminated  forgotten  promoted  conflicts
+             'core':    2'305             0      2'091         1'692         84              0        100          29            0          0        0           0          0    18'129      7'526
+       'default_lp':        0             0          0            63          2              0          6          29            0          0        0           0          0       754        370
+  'fs_random_no_lp':        0             0          0             0          0              0          0           0            0          0        0           0          0         0          0
+       'max_lp_sym':    1'847           492      1'653             1          0              0          0           3            0          0        0           0          0         0          7
+            'no_lp':        0             0          0         1'687         24              4        203          29            0          0        0           0          0    13'024      5'667
+    'quick_restart':    1'014           301          4             5          0              0          0           4          175          0        0           0          0         2         79
+    'reduced_costs':        0             0          0             9          2              2          2          29            0          0        0           0          0        77         79
+
+Lp stats            Component  Iterations  AddedCuts  OPTIMAL  DUAL_F.  DUAL_U.
+     'default_lp':          1       4'620         52      468        0       19
+     'max_lp_sym':          1       2'369        276        8       26        1
+  'quick_restart':          1       2'538         65      306        0        0
+  'reduced_costs':          1       3'757        949       22      149        3
+
+Lp dimension            Final dimension of first component
+     'default_lp':    156 rows, 5071 columns, 1859 entries
+     'max_lp_sym':  2634 rows, 5361 columns, 11353 entries
+  'quick_restart':    168 rows, 5071 columns, 2652 entries
+  'reduced_costs':    670 rows, 5361 columns, 7818 entries
+
+Lp debug            CutPropag  CutEqPropag  Adjust  Overflow    Bad  BadScaling
+     'default_lp':          0            0      83         0    633           0
+     'max_lp_sym':          0            0      31         0  4'395           0
+  'quick_restart':          0            0     132         0  1'279           0
+  'reduced_costs':          0            0      24         0  2'124           0
+
+Lp pool             Constraints  Updates  Simplif  Merged  Shortened  Split  Strengthened  Cuts/Call
+     'default_lp':        3'517        4    7'340       0      3'942      0             0      52/66
+     'max_lp_sym':       11'621       71   18'011       5     12'694      3           259    276/397
+  'quick_restart':        3'530       42    8'234       0      4'146      0             0     65/101
+  'reduced_costs':       12'297       68   11'943       2     12'068      1           698  949/1'496
+
+Lp Cut           reduced_costs  default_lp  max_lp_sym  quick_restart
+         CG_FF:             28           4           1              2
+          CG_K:              5           -           -              -
+         CG_KL:              1           -           -              -
+          CG_R:             19           -           7              -
+         CG_RB:              1           -           1              -
+        Clique:             10           -          10              -
+            IB:             72          45           -             37
+        LinMax:            353           -          81              -
+      MIR_1_FF:             72           -          11              -
+       MIR_1_K:              3           -           -              -
+       MIR_1_R:             50           -           -              -
+     MIR_1_RLT:            204           -           8              -
+      MIR_2_FF:             34           -           4              -
+       MIR_2_K:              1           -           -              -
+       MIR_2_R:             23           -           2              -
+      MIR_3_FF:              5           -           9              -
+       MIR_3_K:              1           -           -              -
+       MIR_3_R:              5           -           7              -
+      MIR_4_FF:              2           -           7              -
+       MIR_4_K:              -           -           1              -
+       MIR_4_R:              5           -           5              -
+      MIR_5_FF:              -           -           3              -
+       MIR_5_R:              1           -           3              -
+      MIR_6_FF:              -           -           5              -
+       MIR_6_R:              -           -           4              -
+  ZERO_HALF_FF:             37           3          10             13
+   ZERO_HALF_K:              2           -           -              1
+   ZERO_HALF_R:             15           -          97             12
+
+LNS stats           Improv/Calls  Closed  Difficulty  TimeLimit
+  'graph_arc_lns':           1/2    100%    8.14e-01       0.10
+  'graph_cst_lns':           1/2    100%    8.14e-01       0.10
+  'graph_dec_lns':           0/2    100%    8.14e-01       0.10
+  'graph_var_lns':           1/1      0%    2.93e-01       0.10
+      'rins/rens':           0/2     50%    5.38e-01       0.10
+    'rnd_cst_lns':           1/1      0%    2.93e-01       0.10
+    'rnd_var_lns':           1/2    100%    8.14e-01       0.10
+
+LS stats                       Batches  Restarts/Perturbs  LinMoves  GenMoves  CompoundMoves  Bactracks  WeightUpdates  ScoreComputed
+                'fj_restart':        1                  1       155         0              0          0              4          1'438
+          'ls_restart_decay':        1                  1     6'758         0              0          0            503         60'015
+  'ls_restart_decay_perturb':        1                  1     5'021         0              0          0            423         44'648
+
+Solutions (13)    Num    Rank
+         'core':   24  [1,13]
+   'fj_restart':    2   [0,1]
+
+Objective bounds     Num
+       'bool_core':   14
+      'default_lp':    1
+  'initial_domain':    1
+      'max_lp_sym':    1
+   'reduced_costs':    3
+
+Solution repositories    Added  Queried  Synchro
+    'alternative_path':      1        0        1
+      'best_solutions':     35       17       24
+   'fj solution hints':      0        0        0
+        'lp solutions':      3        3        3
+                'pump':      1        0
+
+Improving bounds shared      Num  Sym
+                  'core':  4'375    0
+            'default_lp':      1    0
+            'max_lp_sym':     24    0
+                 'no_lp':     22    0
+         'quick_restart':    268    0
+         'reduced_costs':     68    0
+
+Clauses shared        #Exported  #Imported  #BinaryRead  #BinaryTotal
+             'core':      2'117          0       41'803        41'842
+       'default_lp':          2          0       41'832        41'842
+  'fs_random_no_lp':          0          0            0        41'842
+       'max_lp_sym':        826          0       41'005        41'842
+            'no_lp':          3          0          534        41'842
+    'quick_restart':     38'549          0       41'834        41'842
+    'reduced_costs':        345          0       41'842        41'842
+
+LRAT_status: NA
+CpSolverResponse summary:
+status: OPTIMAL
+objective: 590750
+best_bound: 590750
+integers: 5368
+booleans: 5051
+conflicts: 0
+branches: 2066
+propagations: 25084
+integer_propagations: 28033
+restarts: 0
+lp_iterations: 0
+walltime: 0.944178
+usertime: 0.944178
+deterministic_time: 2.72393
+gap_integral: 12.4664
+solution_fingerprint: 0xafec9ef6454f9bb4
+
+Solver Status: OPTIMAL
+Warning: 4 staff assigned on 2026-05-04
+  夜勤配置数: 94件
+
+  前月の夜勤実績(申請より): 15件 -> 統合
+📅 今月の公休目標: 10日
+
+🌅 公休先行配置（Phase 1）実行中...
+    T037: クリティカル日1日をスキップ
+    T039: クリティカル日1日をスキップ
+    T040: クリティカル日1日をスキップ
+    T062: クリティカル日1日をスキップ
+    T042: クリティカル日1日をスキップ
+    T047: クリティカル日1日をスキップ
+    T048: クリティカル日1日をスキップ
+    T049: クリティカル日1日をスキップ
+    T050: クリティカル日1日をスキップ
+    T052: クリティカル日1日をスキップ
+    T053: クリティカル日1日をスキップ
+    T054: クリティカル日1日をスキップ
+    T057: クリティカル日1日をスキップ
+    T058: クリティカル日1日をスキップ
+    T059: クリティカル日2日をスキップ
+    T060: クリティカル日2日をスキップ
+    T061: クリティカル日2日をスキップ
+    T005: クリティカル日2日をスキップ
+    T063: クリティカル日2日をスキップ
+    T064: クリティカル日2日をスキップ
+    T065: クリティカル日2日をスキップ
+  事前公休割り当て: 104件
+
+☀️ 日勤スケジューリング実行中（研修なし）...
+Scheduling Day: 2026-05-01
+Scheduling Day: 2026-05-02
+Scheduling Day: 2026-05-03
+Scheduling Day: 2026-05-04
+Scheduling Day: 2026-05-05
+Scheduling Day: 2026-05-06
+Scheduling Day: 2026-05-07
+Scheduling Day: 2026-05-08
+Scheduling Day: 2026-05-09
+Scheduling Day: 2026-05-10
+Scheduling Day: 2026-05-11
+Scheduling Day: 2026-05-12
+Scheduling Day: 2026-05-13
+Scheduling Day: 2026-05-14
+Scheduling Day: 2026-05-15
+Scheduling Day: 2026-05-16
+Scheduling Day: 2026-05-17
+Scheduling Day: 2026-05-18
+Scheduling Day: 2026-05-19
+Scheduling Day: 2026-05-20
+Scheduling Day: 2026-05-21
+Scheduling Day: 2026-05-22
+Scheduling Day: 2026-05-23
+Scheduling Day: 2026-05-24
+Scheduling Day: 2026-05-25
+Scheduling Day: 2026-05-26
+Scheduling Day: 2026-05-27
+Scheduling Day: 2026-05-28
+Scheduling Day: 2026-05-29
+Scheduling Day: 2026-05-30
+Scheduling Day: 2026-05-31
+  日勤配置数: 799件
+
+📅 10日公休付与中...
+  ⚠️ T001(加藤　光久): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T002(石川　和弥): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T003(矢野　昌男): 固定公休(16日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T009(佐藤　和彦): 固定公休(14日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T010(川向　克茂): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T011(渡邉　一博): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T012(須田　章則): 固定公休(14日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T013(永井　基博): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T018(増田　翔太): 固定公休(13日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T019(小川　龍史): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T020(清水　万慈): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T021(橋本　圭市): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T023(箕輪　綱平): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T024(石井　哲也): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T025(森　拓磨): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T026(川名　佑樹): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T027(大島　七泉): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T029(佐藤　海夢): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T031(嶋田　帆波): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T032(細谷　祐太): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T033(大村　直輝): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T034(星　和馬): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T035(細谷　菜々): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T037(松井　芙美佳): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T039(斎藤　来夢): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T040(宮野　拓也): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T043(田﨑　来実): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T044(平野　裕理): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T046(大浦　駿介): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T047(鈴木　りんか): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T048(髙谷　ひな): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T049(野口　愛里彩): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T052(藤井　華帆): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T055(畠山　秀人): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T056(友邉　和哉): 固定公休(12日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+  ⚠️ T066(遠藤　健太郎): 固定公休(11日)が目標(10日)を超過しています。この月は構造的に規定を下回れません。
+✅ 10日公休処理: 2件の自動休を追加 (0件の研修割当を休に変更) - 0名に計0日の代休を付与
+
+📞 拘束（オンコール）自動配置中...
+  拘束割り当て完了
+
+🔍 最終検証・エラーレポート作成中...
+  ⚠️ 100件の警告が発生しました
+    - 5月1日: [病院MR] の配置人数が不足しています (目標: 3人 / 実際: 2人)
+    - 5月1日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 1人)
+    - 5月1日: [ク] の配置人数が不足しています (目標: 5人 / 実際: 4人)
+    - 5月1日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月1日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月1日: [HB] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月1日: [入] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月2日: [ポ] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月2日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月7日: [病院MR] の配置人数が不足しています (目標: 3人 / 実際: 2人)
+    - 5月7日: [ク] の配置人数が不足しています (目標: 5人 / 実際: 4人)
+    - 5月7日: [超遅] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月12日: [CLMR] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月12日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 2人)
+    - 5月13日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 1人)
+    - 5月13日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 5人)
+    - 5月13日: [HB] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月14日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月14日: [ア] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月14日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月15日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月15日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 5人)
+    - 5月18日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月18日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 5人)
+    - 5月19日: [CLMR] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月19日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 2人)
+    - 5月19日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 4人)
+    - 5月19日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月19日: [HB] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月20日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月21日: [病院MR] の配置人数が不足しています (目標: 3人 / 実際: 2人)
+    - 5月21日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月21日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 5人)
+    - 5月21日: [ア] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月21日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月21日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月22日: [病院MR] の配置人数が不足しています (目標: 3人 / 実際: 2人)
+    - 5月22日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月22日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 5人)
+    - 5月22日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月22日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月22日: [HB] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月22日: [病L] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月23日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月25日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月25日: [ポ] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月25日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月25日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月25日: [HB] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月25日: [入] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月25日: [超遅] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月26日: [病院MR] の配置人数が不足しています (目標: 3人 / 実際: 2人)
+    - 5月26日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月26日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 4人)
+    - 5月26日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月26日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月26日: [HB] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月26日: [入] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月26日: [病L] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月27日: [病院MR] の配置人数が不足しています (目標: 3人 / 実際: 2人)
+    - 5月27日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 5人)
+    - 5月27日: [ク] の配置人数が不足しています (目標: 6人 / 実際: 4人)
+    - 5月27日: [ポ] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月27日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月27日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月27日: [HB] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月27日: [入] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月28日: [病院MR] の配置人数が不足しています (目標: 3人 / 実際: 2人)
+    - 5月28日: [CLMR] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月28日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 2人)
+    - 5月28日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 5人)
+    - 5月28日: [ア] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月28日: [ク] の配置人数が不足しています (目標: 5人 / 実際: 4人)
+    - 5月28日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月28日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月28日: [OP] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月28日: [入] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月28日: [病L] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月28日: [超遅] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月29日: [病院MR] の配置人数が不足しています (目標: 3人 / 実際: 2人)
+    - 5月29日: [CLMR] の配置人数が不足しています (目標: 5人 / 実際: 4人)
+    - 5月29日: [CT] の配置人数が不足しています (目標: 4人 / 実際: 1人)
+    - 5月29日: [病CT] の配置人数が不足しています (目標: 6人 / 実際: 3人)
+    - 5月29日: [ク] の配置人数が不足しています (目標: 5人 / 実際: 4人)
+    - 5月29日: [ポ] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月29日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月29日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月29日: [HB] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月29日: [超遅] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月30日: [CLMR] の配置人数が不足しています (目標: 4人 / 実際: 3人)
+    - 5月30日: [CT] の配置人数が不足しています (目標: 3人 / 実際: 1人)
+    - 5月30日: [ポ] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月30日: [精] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月30日: [MG] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月30日: [DR] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月30日: [入] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月30日: [病L] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月30日: [超遅] の配置人数が不足しています (目標: 1人 / 実際: 0人)
+    - 5月31日: [出] の配置人数が不足しています (目標: 2人 / 実際: 1人)
+    - 5月30日: 夜勤メンバーにHB対応可能者がいないため代替処理を行いました (※本日の拘束枠でHBカバー)
+📊 Excel生成中...
+✓ 勤務表を保存: output/勤務表_2026年5月.xlsx
+
+======================================================================
+✅ 勤務表作成完了
+======================================================================
