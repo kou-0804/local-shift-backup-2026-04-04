@@ -12,6 +12,8 @@ from typing import Dict, Tuple, List
 from shift_scheduler.src.models.assignment import NightAssignment, DayAssignment
 from shift_scheduler.src.models.skill import SkillRank
 from datetime import date, timedelta
+from io import BytesIO
+from shift_scheduler.src.models.schedule_result import ScheduleResult
 
 
 def assign_monthly_off_days(
@@ -1114,273 +1116,119 @@ def optimize_assignments_cpsat(day_result_list, technicians, skills, locations, 
     return new_list
 
 
-def main():
-    parser = argparse.ArgumentParser(description='勤務表自動作成システム')
-    parser.add_argument('--year', type=int, required=True, help='年（例: 2026）')
-    parser.add_argument('--month', type=int, required=True, help='月（例: 1）')
-    parser.add_argument('--data-dir', default='shift_scheduler/data', help='データディレクトリ')
-    parser.add_argument('--output-dir', default='output', help='出力ディレクトリ')
-    args = parser.parse_args()
-    
-    year = args.year
-    month = args.month
+def run_schedule(year: int, month: int, data_dir: str = "shift_scheduler/data",
+                 output_dir: str | None = None, *, target_holidays: int | None = None) -> ScheduleResult:
+    """勤務表を生成して構造化結果を返す（CLI/Web 共通の呼び出し口）。
+
+    output_dir を指定すると現行レイアウトの .xlsx も書き出す（CLI 用）。
+    ロジックは既存スケジューラを無改造で使う（決定性 seed=42 / num_workers=1 維持）。
+    """
     year_month = f"{year}-{month:02d}"
-    
+
     print("=" * 70, flush=True)
     print(f"勤務表作成システム - {year}年{month}月", flush=True)
     print("=" * 70, flush=True)
-    print(flush=True)
-    
-    # データ読み込み
-    print("📂 データ読み込み中...", flush=True)
-    # NOTE: user originally asked for `DataLoader(data_dir=args.data_dir)`
-    # My DataLoader logic might just take base path.
-    # checking imports: src/loaders/data_loader.py
-    try:
-        loader = DataLoader(data_dir=args.data_dir)
-        # load_all returns: staff_list, locations, skills, requests, rules, pb_rules
-        # But we need granular load as per user snippet to be safe?
-        # User snippet used granular calls: load_technicians, load_skills...
-        # My DataLoader (from Step 306/prev) has `load_all` but maybe not granular public methods?
-        # Let's use `load_all` for safety if my granular methods aren't exposed or same signature.
-        # But user script uses granular. Let's try to stick to user script structure if possible.
-        # If my DataLoader doesn't support it, I will use `load_all`.
-        
-        # Actually my DataLoader usually has load_technicians etc.
-        # Let's use the granular calls if they exist, or fallback to load_all components.
-        # Checking DataLoader contents via prior knowledge or assume standard structure.
-        # I'll use `load_all` components to be safe and cleaner.
-        
-        staff_list, locations, skills, requests, rules, pb_rules = loader.load_all(year_month)
-        
-        # Need night_counts? load_all doesn't return night_counts?
-        # In Step 283 log, `load_all` returns:
-        # staff_list, locations, skills, requests, rules, pb_rules
-        # It MISSES night_counts!
-        # I need to load night_counts separately if needed for NightScheduler.
-        # NightScheduler needs `night_counts`.
-        # I should check if `loader` has `load_night_counts`.
-        # 6. Load Night Shift Counts (Limits)
-        name_to_id = {s.name: s.id for s in staff_list}
-        night_counts = loader.load_night_counts(year_month, name_to_id=name_to_id)
-        print(f"  夜勤回数データ: {len(night_counts)}名分", flush=True)
 
-    except Exception as e:
-        print(f"Error loading data: {e}", flush=True)
-        # Fallback or exit
-        # Try granular if load_all failed or signature mismatch
-        # But let's assume we can fix it.
-        # Let's inspect DataLoader if needed. 
-        
-    technicians = staff_list # Alias
+    # ── データ読み込み（失敗時は例外を伝播：握り潰さない）──
+    print("📂 データ読み込み中...", flush=True)
+    loader = DataLoader(data_dir=data_dir)
+    staff_list, locations, skills, requests, rules, pb_rules = loader.load_all(year_month)
+    name_to_id = {s.name: s.id for s in staff_list}
+    night_counts = loader.load_night_counts(year_month, name_to_id=name_to_id)
+
+    technicians = staff_list
     special_rules = rules
     training_rules = loader.load_training_rules(technicians)
-    
-    print(f"  技師: {len(technicians)}名", flush=True)
-    print(f"  勤務場所: {len(locations)}箇所", flush=True)
-    print(f"  予定申請: {len(requests)}件", flush=True)
-    print(flush=True)
-    
-    # 夜勤スキル導出
-    print("🌙 夜勤スキル導出中...", flush=True)
+
+    # ── 夜勤スキル導出 → 前月夜勤実績 → 夜勤スケジューリング ──
     night_skills = NightSkillDeriver.derive(skills)
-    mr_count = sum(1 for ns in night_skills if ns.mr_skill)
-    angio_count = sum(1 for ns in night_skills if ns.angio_skill)
-    cath_count = sum(1 for ns in night_skills if ns.cath_skill)
-    print(f"  MRスキル: {mr_count}名", flush=True)
-    print(f"  アンギオスキル: {angio_count}名", flush=True)
-    print(f"  心カテスキル: {cath_count}名", flush=True)
-    print(flush=True)
-    
-    # 前月末の夜勤実績を申請データから取得（当月1日の明け判定に必要）
-    print("🔙 前月の夜勤実績を確認中...", flush=True)
     start_date = date(year, month, 1)
     prev_month_limit = start_date - timedelta(days=7)
-    prev_night_history = []
-    for r in requests:
-        if prev_month_limit <= r.date < start_date and '夜' in r.symbol:
-            prev_night_history.append(
-                NightAssignment(date=r.date, staff_id=r.staff_id, role='History')
-            )
-    print(f"  前月の夜勤実績: {len(prev_night_history)}件 -> 統合", flush=True)
-
-    # 夜勤スケジューリング
-    print("🌙 夜勤スケジューリング実行中...", flush=True)
+    prev_night_history = [
+        NightAssignment(date=r.date, staff_id=r.staff_id, role='History')
+        for r in requests
+        if prev_month_limit <= r.date < start_date and '夜' in r.symbol
+    ]
     night_scheduler = NightScheduler(staff_list=technicians, year=year, month=month)
     night_result = night_scheduler.schedule(requests, night_counts, prev_night_history)
-    print(f"  夜勤配置数: {len(night_result)}件", flush=True)
-    print(flush=True)
 
-    # 夜勤データ変換: List[NightAssignment] -> Dict[day -> List[staff_id]]
     night_assignments_dict = {}
     for na in night_result:
         night_assignments_dict.setdefault(na.date.day, []).append(na.staff_id)
-
-    print(f"  前月の夜勤実績(申請より): {len(prev_night_history)}件 -> 統合", flush=True)
-
-    # 当月用と引き継ぎ用を分離
-    # night_result     = Excel出力用（当月分のみ）
-    # full_night_assignments = DayScheduler用（前月末分を含む）
     full_night_assignments = night_result + prev_night_history
 
-    # 公休目標日数を読み込む
-    target_holidays = loader.load_monthly_holidays(year, month)
-    print(f"📅 今月の公休目標: {target_holidays}日", flush=True)
-    print(flush=True)
+    if target_holidays is None:
+        target_holidays = loader.load_monthly_holidays(year, month)
 
-    # ===== Phase 1: 公休先行配置（スキル枯渇チェック付き） =====
-    print("🌅 公休先行配置（Phase 1）実行中...", flush=True)
+    # ── Phase 1/2/2.5/2.6 ──（既存ヘルパをそのまま呼ぶ）
     pre_seeded = pre_seed_rest_days(
-        technicians=technicians,
-        requests=requests,
-        night_assignments=full_night_assignments,
-        year=year,
-        month=month,
-        target_holidays=target_holidays,
-        skills=skills,
-        locations=locations,
+        technicians=technicians, requests=requests, night_assignments=full_night_assignments,
+        year=year, month=month, target_holidays=target_holidays, skills=skills, locations=locations,
     )
     requests_with_preseed = requests + pre_seeded
-    print(flush=True)
-
-    # ===== Phase 2: 日勤スケジューリング（研修配置なし）=====
-    # 研修枠（拡大配置）は自動配置せず、担当者が手動で調整する
-    print("☀️ 日勤スケジューリング実行中（研修なし）...", flush=True)
     day_scheduler = DayScheduler(
-        staff_list=technicians,
-        skills=skills,
-        locations=locations,
-        pb_rules=pb_rules,
-        rules=special_rules,
-        training_rules=training_rules,
-        year=year,
-        month=month,
-        disable_training=True,
-        target_holidays=target_holidays,
+        staff_list=technicians, skills=skills, locations=locations, pb_rules=pb_rules,
+        rules=special_rules, training_rules=training_rules, year=year, month=month,
+        disable_training=True, target_holidays=target_holidays,
     )
     day_result_list, daily_location_needs = day_scheduler.schedule(requests_with_preseed, full_night_assignments)
-    print(f"  日勤配置数: {len(day_result_list)}件", flush=True)
-    print(flush=True)
-
-    # ===== Phase 2.5: 勤務平均化リバランサー（過剰休↔代休者の日勤交換）=====
-    print("⚖️ 勤務平均化リバランス中...", flush=True)
     day_result_list = rebalance_workload(
-        day_result_list=day_result_list,
-        technicians=technicians,
-        skills=skills,
-        locations=locations,
-        requests=requests_with_preseed,
-        night_assignments=full_night_assignments,
-        year=year,
-        month=month,
-        target_holidays=target_holidays,
+        day_result_list=day_result_list, technicians=technicians, skills=skills, locations=locations,
+        requests=requests_with_preseed, night_assignments=full_night_assignments,
+        year=year, month=month, target_holidays=target_holidays,
     )
-    print(flush=True)
-
-    # ===== Phase 2.6: CP-SAT 全体最適化（ク6修正＋場所別公平化）=====
-    # 反映は「解からの再構築」方式（前回バグの根治）。代休は各人現状以下に固定し悪化させない。
-    print("🧮 CP-SAT全体最適化中（ク6修正＋公平化）...", flush=True)
     day_result_list = optimize_assignments_cpsat(
-        day_result_list=day_result_list,
-        technicians=technicians,
-        skills=skills,
-        locations=locations,
-        requests=requests_with_preseed,
-        night_assignments=full_night_assignments,
-        year=year,
-        month=month,
-        target_holidays=target_holidays,
+        day_result_list=day_result_list, technicians=technicians, skills=skills, locations=locations,
+        requests=requests_with_preseed, night_assignments=full_night_assignments,
+        year=year, month=month, target_holidays=target_holidays,
     )
-    print(flush=True)
-
-    # ===== 公休付与（規定日数に合わせて '休' を追加） =====
-    # requests_with_preseed を渡して pre-seed 済み ☆ を公休としてカウントさせる
-    print(f"📅 {target_holidays}日公休付与中...", flush=True)
     day_result_list, daikyu_counts, off_counts = assign_monthly_off_days(
-        technicians=technicians,
-        day_result_list=day_result_list,
-        night_assignments=full_night_assignments,
-        requests=requests_with_preseed,
-        year=year,
-        month=month,
-        target_holidays=target_holidays,
+        technicians=technicians, day_result_list=day_result_list, night_assignments=full_night_assignments,
+        requests=requests_with_preseed, year=year, month=month, target_holidays=target_holidays,
     )
-    print(flush=True)
-    
-    # ===== Post-Processing: Assign On-Call (拘束) =====
-    print("📞 拘束（オンコール）自動配置中...", flush=True)
+
+    # ── 拘束（オンコール）──
     from shift_scheduler.src.schedulers.oncall_scheduler import OnCallScheduler
-    oncall_scheduler = OnCallScheduler(
-        staff_list=technicians,
-        year=year,
-        month=month
-    )
-    on_call_assignments, on_call_counts = oncall_scheduler.schedule(day_result_list, full_night_assignments, requests)
-    print(flush=True)
-    
-    # Data Conversion: List[DayAssignment] -> Dict[int, Dict[str, List[str]]]
-    # {day: {loc_code: [tech_id]}}
+    oncall_scheduler = OnCallScheduler(staff_list=technicians, year=year, month=month)
+    on_call_assignments, on_call_counts = oncall_scheduler.schedule(
+        day_result_list, full_night_assignments, requests)
+
+    # ── 出力用辞書へ変換 ──
     day_assignments_dict = {}
     for da in day_result_list:
-        # If day_result_list contains '休' (Prev Night Holiday enforcement), we handle it.
-        d_day = da.date.day
-        # Filter out if date is not current month
-        if da.date.month != month: continue
-        
-        if d_day not in day_assignments_dict:
-            day_assignments_dict[d_day] = {}
-        if da.location_code not in day_assignments_dict[d_day]:
-            day_assignments_dict[d_day][da.location_code] = []
-        day_assignments_dict[d_day][da.location_code].append(da.staff_id)
-        
-    # Requests Conversion（pre-seeded ☆ を含めて Excel に反映する）
+        if da.date.month != month:
+            continue
+        day_assignments_dict.setdefault(da.date.day, {}).setdefault(da.location_code, []).append(da.staff_id)
+
     requests_dict = {}
     for r in requests_with_preseed:
-        d_day = r.date.day
         if r.date.year == year and r.date.month == month:
-            if d_day not in requests_dict:
-                requests_dict[d_day] = {}
-            # 元の申請が既にある場合は上書きしない（pre-seeded ☆ より元申請を優先）
-            if r.staff_id not in requests_dict[d_day]:
-                requests_dict[d_day][r.staff_id] = r.symbol
+            slot = requests_dict.setdefault(r.date.day, {})
+            if r.staff_id not in slot:
+                slot[r.staff_id] = r.symbol
 
-    # ── Validation (Configure Validation Errors) ──
-    print("🔍 最終検証・エラーレポート作成中...", flush=True)
+    # ── 検証 ──
     validation_errors = []
-    
-    # 1. Day Shift Understaffing Check
     for d, loc_needs in daily_location_needs.items():
-        d_day = d.day
         for loc_code, required in loc_needs.items():
             if loc_code.startswith('(') and loc_code.endswith(')'):
-                continue # Skip dummy training locations from understaffing warnings
+                continue
             if required > 0:
-                assigned_count = len(day_assignments_dict.get(d_day, {}).get(loc_code, []))
-                if assigned_count < required:
-                    validation_errors.append(f"{d.month}月{d.day}日: [{loc_code}] の配置人数が不足しています (目標: {required}人 / 実際: {assigned_count}人)")
-                    
-    # 2. Night Shift HB Coverage Check
+                assigned = len(day_assignments_dict.get(d.day, {}).get(loc_code, []))
+                if assigned < required:
+                    validation_errors.append(
+                        f"{d.month}月{d.day}日: [{loc_code}] の配置人数が不足しています (目標: {required}人 / 実際: {assigned}人)")
     for d_day, assigns in night_assignments_dict.items():
         night_staff_objs = [s for s in technicians if s.id in assigns]
-        has_hb = any(getattr(s, 'night_hb', False) for s in night_staff_objs)
-        if not has_hb:
-            validation_errors.append(f"{month}月{d_day}日: 夜勤メンバーにHB対応可能者がいないため代替処理を行いました (※本日の拘束枠でHBカバー)")
-            
-    if not validation_errors:
-         print("  ✅ 全ての要件が正常に満たされています")
-    else:
-         print(f"  ⚠️ {len(validation_errors)}件の警告が発生しました")
-         for err in validation_errors:
-             print(f"    - {err}")
+        if not any(getattr(s, 'night_hb', False) for s in night_staff_objs):
+            validation_errors.append(
+                f"{month}月{d_day}日: 夜勤メンバーにHB対応可能者がいないため代替処理を行いました (※本日の拘束枠でHBカバー)")
 
-    # ===== クL（クリニックリーダー）表示付与（検証後・表示オーバーレイ）=====
-    # その日のク担当者から有資格者1名を「クL」表示にする。資格=3年目以降・女性・ク有資格。
-    # クL回数が最小の人を選ぶ輪番で負担を均等化（同数は技師IDで決定的）。クはそのまま1カウント。
+    # ── クL 表示オーバーレイ ──（現行 main.py:1376-1407 をそのまま移植）
     from shift_scheduler.src.models.skill import SkillRank as _SR
     _staff_by_id = {t.id: t for t in technicians}
+
     def _can_lead_clinic(sid):
-        # スキルマスタの「クL」列を権威とする（運用者が個別に資格を管理）。
-        # クL列が無いデータでは従来ルール(3年目以降・女性・ク有資格)に自動フォールバック。
         ssk = skills.get(sid, {})
         if 'クL' in ssk:
             return ssk.get('クL', _SR.NONE) > _SR.NONE
@@ -1390,8 +1238,8 @@ def main():
         if int(t.experience_years) < 3:
             return False
         return ssk.get('ク', _SR.NONE) > _SR.NONE
+
     _kl_counts = {}
-    _kl_days = 0
     for _d in sorted(day_assignments_dict.keys()):
         _ku = day_assignments_dict[_d].get('ク', [])
         _elig = [sid for sid in _ku if _can_lead_clinic(sid)]
@@ -1403,33 +1251,48 @@ def main():
             del day_assignments_dict[_d]['ク']
         day_assignments_dict[_d].setdefault('クL', []).append(_leader)
         _kl_counts[_leader] = _kl_counts.get(_leader, 0) + 1
-        _kl_days += 1
-    print(f"  👑 クL付与: {_kl_days}日に指定 (対象{len(_kl_counts)}名 / 回数分布{sorted(_kl_counts.values(), reverse=True)})", flush=True)
 
-    # Excel出力
-    print("📊 Excel生成中...", flush=True)
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    output_path = f"{args.output_dir}/勤務表_{year}年{month}月.xlsx"
+    # ── Excel（現行レイアウト）→ bytes、必要なら file ──
     generator = ExcelGenerator(
-        year=year,
-        month=month,
-        technicians=technicians,
-        night_assignments=night_assignments_dict,
+        year=year, month=month, technicians=technicians,
+        night_assignments=night_assignments_dict, day_assignments=day_assignments_dict,
+        requests=requests_dict, on_call_assignments=on_call_assignments,
+        name_mapper=None, daikyu_counts=daikyu_counts, off_counts=off_counts,
+        validation_errors=validation_errors,
+    )
+    workbook_bytes = generator.generate_bytes()
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        with open(f"{output_dir}/勤務表_{year}年{month}月.xlsx", "wb") as f:
+            f.write(workbook_bytes)
+
+    return ScheduleResult(
+        year=year, month=month,
+        staff=[{"id": t.id, "name": t.name} for t in technicians],
         day_assignments=day_assignments_dict,
+        night_assignments=night_assignments_dict,
         requests=requests_dict,
         on_call_assignments=on_call_assignments,
-        name_mapper=None, # Optional if not used
-        daikyu_counts=daikyu_counts,
-        off_counts=off_counts,
-        validation_errors=validation_errors
+        daikyu_counts=daikyu_counts, off_counts=off_counts,
+        validation_errors=validation_errors,
+        workbook_bytes=workbook_bytes,
     )
-    generator.generate(output_path)
-    print(flush=True)
-    
+
+
+def main():
+    parser = argparse.ArgumentParser(description='勤務表自動作成システム')
+    parser.add_argument('--year', type=int, required=True, help='年（例: 2026）')
+    parser.add_argument('--month', type=int, required=True, help='月（例: 1）')
+    parser.add_argument('--data-dir', default='shift_scheduler/data', help='データディレクトリ')
+    parser.add_argument('--output-dir', default='output', help='出力ディレクトリ')
+    args = parser.parse_args()
+
+    run_schedule(args.year, args.month, data_dir=args.data_dir, output_dir=args.output_dir)
+
     print("=" * 70, flush=True)
     print("✅ 勤務表作成完了", flush=True)
     print("=" * 70, flush=True)
+
 
 if __name__ == '__main__':
     main()
