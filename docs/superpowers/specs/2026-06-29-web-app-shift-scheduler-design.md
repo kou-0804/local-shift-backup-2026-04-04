@@ -1,0 +1,293 @@
+# 設計書：放射線技師 勤務表 Webアプリ（院内サーバー版 v1）
+
+- **日付**: 2026-06-29
+- **ステータス**: 設計承認済み（実装計画 writing-plans へ移行予定）
+- **対象**: 既存のローカル勤務表作成ツール（Python / OR-Tools CP-SAT）を、院内サーバーで複数人が使えるWebアプリ化する
+- **絶対要件**: 現在の設定（マスタCSV・ロジック）を完全に引き継ぎ、**同じ入力なら現行CLIとExcelがバイト単位で一致**すること
+
+---
+
+## 1. 背景と目的
+
+現在のツールは `python main.py --year 2026 --month 6` で実行する単発バッチCLI。入力は `shift_scheduler/data/` の8つのマスタCSV＋月次の予定申請、出力は `output/勤務表_YYYY年M月.xlsx`。外部サービス・DB・常駐プロセスを使わず完全に自己完結している。
+
+### 解決したい課題
+1. **使用感の向上**：年月選択・生成・確認・修正・出力をブラウザ上で完結させたい。
+2. **手修正の支援**：自動生成は未完成で、特定個人への連続勤務や配置の偏りが残る。Web上で人が直しやすくし、修正時に「勤務不足の場所」「公休数が目標未満の人」「連続勤務」を視覚的に警告したい。
+3. **マスタ管理**：マスタの作成・編集をWeb上で行いたい。
+4. **複数人利用**：院内サーバーに設置し、他スタッフも（最終的には）アクセスできるようにする。
+
+### 運用の前提（維持するもの）
+- 休み希望は **Microsoft Power Apps** で受け付け、CSV出力 → 取り込み。このフローは現状維持（予定申請の入力UIは作らない）。
+
+---
+
+## 2. ゴール / 非ゴール
+
+### ゴール（v1）
+- 既存 `shift_scheduler/` パッケージのロジックを**無改造**で再利用する（薄い切り出しのみ）。
+- 生成→**Excel風グリッドでの手修正**（セル編集・ドラッグ＆ドロップ・Undo/Redo）→**現行フォーマットのままExcel出力**（手修正反映）。
+- **リアルタイム警告**：勤務不足の場所／公休数が目標未満の人／連続勤務の個人／スキル・パワーバランス・夜勤スキル違反。
+- **偏りヒートマップ**＋個人別/場所別サマリー＋公平性スコア。
+- **部分ロックして再生成**（固定したセルを保ちつつ残りを解き直す）。
+- **全マスタのCRUD**（CRUD対象7種＋取り込み専用1種）＋入力検証＋安全装置。
+- **簡易ログイン**（管理者/編集者/閲覧者）＋**確定ロック**＋**月別アーカイブ**＋日次バックアップ。
+- 院内サーバー1台に **Docker Compose** で配置。データは院内ネットワークから出さない。
+
+### 非ゴール（将来）
+- 休み希望の入力（Power Apps を継続利用）。
+- 他病院への汎用化（後述のハードコード項目を設定へ外出しする作業）。v1は「この病院専用」として動かす。
+- ソルバー自体の精度改善（偏り・連勤の根治）。当面は手修正で対応し、追って改善する。
+
+---
+
+## 3. 現行システムの要点（マップ結果の要約）
+
+> 出典: `main.py`（CLIオーケストレータ, 約1436行）＋ `shift_scheduler/src/`（loaders, schedulers, `excel_generator.py`）＋ `shift_scheduler/data/` の8マスタ。
+
+### 3.1 きれいな関数境界
+- 現状は `main()` 本体（約 `main.py:1117-1432`）が argparse と副作用（`print`、`os.makedirs`、固定パスへの `wb.save`）に閉じ込められている。**再利用可能な呼び出し口が無い**ことが唯一の主要ブロッカー。
+- ローダー/スケジューラはコンストラクタ引数で入力を受け取り、**モジュールレベルの可変グローバル状態・`os.chdir`/`os.getcwd` は無い**（`tests/verify_req1234.py` のみ getcwd を使用、本体に無関係）。→ 切り出しは低リスク。
+
+抽出する境界：
+```python
+run_schedule(year: int, month: int, data_dir: str, output_dir: str | None = None,
+             *, target_holidays: int | None = None, seed: int = 42,
+             locked_assignments: list | None = None) -> ScheduleResult
+```
+
+処理段（すべて現 `main()` 内に存在）：
+1. `DataLoader(data_dir).load_all(year_month)` → staff/locations/skills/requests/rules/pb_rules、続いて `load_night_counts` / `load_training_rules` / `load_monthly_holidays`。
+2. `NightSkillDeriver.derive`（※**死コード**：実際の夜勤フラグは `data_loader.py:33-47` でランク≥Bで設定。deriver は≥Cで未使用）。
+3. `prev_night_history`（1日の7日前まで、記号に「夜」を含むもの）。
+4. `NightScheduler.schedule` → 夜勤（1つの月単位CP-SATモデル）。
+5. Phase1 `pre_seed_rest_days` → 「休(仮)」申請。
+6. Phase2 `DayScheduler(disable_training=True).schedule` → 日勤（**日ごとに別CP-SATモデル**, 約28-31本）。
+7. Phase2.5 `rebalance_workload`（貪欲スワップ）。
+8. Phase2.6 `optimize_assignments_cpsat`（accept/reject ゲート：指標が悪化したら入力をそのまま返す）。
+9. `assign_monthly_off_days` → 代休 `daikyu_counts` / 公休 `off_counts`。
+10. `OnCallScheduler.schedule` → 拘束（**CP-SATでなく貪欲**、即時）。
+11. 検証（不足＋夜勤HBカバレッジ）＋クL表示オーバーレイ。
+12. `ExcelGenerator.generate`。
+
+### 3.2 決定性（“設定の引き継ぎ”の半分）
+- 3つのCP-SATソルバーは `random_seed=42`、`num_workers=1`、停止は `max_deterministic_time`（夜120s / 日30s・モデル毎 / cpsat120s）を主、`max_time_in_seconds`（300/600s）は通常効かない安全弁。貪欲段はソート済みリストを走査。
+- **`num_workers` を上げない／wall-clock停止に依存しない**こと（過去メモ `project_data_integrity`：wall-clock停止が非決定性の真因だった）。
+- 該当箇所：`night_scheduler.py:71-75`、`day_scheduler.py:1233-1239`。
+
+### 3.3 Excel生成（“設定の引き継ぎ”の半分）
+- openpyxl 出力は**入力が同一なら決定的**。変動要因はスケジューラのみ。
+- 表示セル文字（例「病CT夜(希)」）は `_get_assignment_text` が**日勤・夜勤・申請の3ソースを優先順位付きで合成**して生成（明け「○」、夜suffix、「(希)」、核医学/治療の休ブランク化、休-vs-申請の上書き等）。文字列→割り当てへの逆変換は曖昧で未実装。
+- 統計列（21ラベル）は `excel_generator.py:92,136,308` の3箇所にハードコード、カウントは文字列パース。公休/代休は外部の `off_counts`/`daikyu_counts` 由来。
+- タイトルは A1:AH1（34列）固定マージで月日数を追従しない（`excel_generator.py:66-67`）。
+- 行順は**技師マスタCSVの並び順**（A列のID数値順ではない）。
+
+### 3.4 マスタ一覧（8ファイル）
+| マスタCSV | 役割 | 主なカラム | 複雑度 | Web対応 |
+|---|---|---|---|---|
+| `技師マスタ_確定版.csv` | 技師名簿（全ID/氏名の源泉＋夜勤/拘束可否） | 技師ID(Tnnn,PK), 氏名(結合キー), 性別{男,女}, 経験年数, 夜勤可否{○,×}, 在籍状況{在籍,退職}, 備考, 拘束可否{○,×} | structured | **Web編集**（平坦グリッド。氏名は他ファイル結合キー／退職は自動除外されない／保存は **utf-8-sig**） |
+| `スキルマスタ_確定版.csv` | 横長ランク表。日勤配置＋夜勤適性導出 | 技師ID, 氏名, 場所コード22列（各 {A,B,C,D,-}） | structured | **Web編集**（制約付きドロップダウン格子。非ABCDは黙ってNONE化／病院MR・CLMR・ア・心・HB の≥Bが夜勤適性に直結／**utf-8-sig**） |
+| `勤務場所マスタ_確定版.csv` | 2表を1ファイルに：(A)場所＋曜日別必要人数、(B)`---パワーバランス設定---` 以降の最低ランク等 | A: 場所コード,場所名,カテゴリ,月..日,性別制約,表示順,有効{○,×} ／ B: 場所コード,最低ランク,最低人数,CD上限,D単独禁止 | complex-logic | **Web編集**（2つのサブエディタ→1ファイルへ正確な順で書戻し。Bは同一コード複数行＝加算的／**utf-8-sig**） |
+| `特殊配置ルール_確定版.csv` | 曜日/第N週/ランク条件/選出元のルール | ルールID(SR-*),場所コード,対象曜日(月..日/水金/-),対象週(1-5/-),必要人数,ランク条件,ランク人数,選出元場所,選出元ランク,備考 | complex-logic | **Web編集**（構造化フォーム）。※注意：`D同士禁止`/`CD上限`/`CD単独禁止` はNONEにパースされ**現状未適用**（死分岐）。凡例行は除外／**utf-8-sig** |
+| `業務拡大マスタ_確定版.csv` | 育成ペア（指導者↔育成対象の同所配置） | 対象モダリティ, 指導者名(or `ランクA保持者`→RANK_A_ONLY), 育成対象者名(CSV,引用符), 表示名 | complex-logic | **Web編集**（名簿バックのマルチセレクト。現状は曖昧部分一致なので安定ID保存／「ランクA保持者」トグル）。※DayScheduler は `disable_training=True` |
+| `夜勤回数_確定版.csv` | 月次の夜勤回数目標 | 1行目タイトル(skiprows=1), 名前(結合), `{m}月` 列(NFKC一致, 既定=列index1), +合計/必要当直者数 | complex-logic | **Web編集**だが生CSVは出さない：月選択→在籍者ごとに数値1欄→タイトル＋ヘッダ＋合計/必要当直者数 footer を再生成／plain UTF-8 |
+| `夜勤スキル一覧.csv` | 夜勤適性のTRUE/FALSE上書き | SName(名前結合), NightShiftMR, NightShiftCardiacCath, NightShiftAngio（＋約37の死列, 迷子の'2026/1/1'） | structured | **Web編集**（技師ごと三状態：TRUE/FALSE/継承）。夜勤HB上書き経路は無し。保存時に死列を掃除 |
+| `予定申請[_YYYYMM].csv` | 休み希望/勤務申請（Power Apps出力） | HolidaySymbol(BOM), PPPDate, RSName('NN 氏名') | structured | **取り込み専用**（記録の源泉はPower Apps）。Web=アップロード+検証+プレビュー。未解決RSNameを報告。**月サフィックス付き**で保存し古い月の誤用を防止 |
+
+### 3.5 コードにハードコードされた病院固有ロジック（マスタ編集では変えられない＝コード改修が要る）
+1. **特定技師IDがハード制約**：`T001`病CT専従/連勤免除、`T013`+`T025` 月6回ク＋同日相互排他（KU6=6）、`T072`館山専任＋バックアップ`T006/T022/T023`、`T002`第4火曜PET、`T022`月曜DX。→ **IDを振り直すと黙って無効化**（過去に夜勤が壊れた事例）。
+2. **場所コード/安全バッファ**：`SCARCE_LOCS`、`CRITICAL_BUFFER{病CT:4,CT:3,病院MR:3,CLMR:2,MG:2}`、公平性グルーピング(CT+病CT, 病院MR+CLMR)、`FROZEN_LOCS`/`LATE`。`qualifies()` が4関数に重複。
+3. **スキル資格しきい値**：HB≥A、ア/心≥B、クL=女+経験≥3+ク。
+4. **約40の魔法定数**（近接 -900000/-120000/-30000、mri_bonus=50000、予算 -1.5M/-200k、欠員 `{CT:5.5M,MG:5M…}`、夜勤 missed_yaki 5M / quota 1M ほか）。相互にバランス。HPI分母が10固定で `target_holidays` を無視（`day_scheduler.py:603-607`）。
+5. **曜日/週ルール**（HB A限定 第1金/第4木、精 水金、CLMR 水金 厳格、第3土クローズ、金曜女性最低4）。
+6. **日本暦**：`jpholiday.is_holiday()`、日曜=`weekday()==6`、1/1-3固定 — 30箇所超。
+7. **記号語彙**（PURE/CONDITIONAL/FORCED_WORK/17休/17業/夜希/出/☆/休(仮)）が約6関数に再定義。
+8. **夜勤モデル固定**：1日3名、役割 MR/アンギオ/心カテ、拘束キー 第1拘束/第2拘束。
+9. **マスタ固定ファイル名**（`_確定版` 接尾辞）が `data_loader.py`/`request_loader.py` にハード（`data_dir` は注入可だが10個の名前は固定）。
+
+**含意**：*この病院* では全マスタのWeb編集が機能する。第2病院やID再採番では上記の外出しが先に必要。
+
+---
+
+## 4. アーキテクチャ
+
+```
+[ React / TypeScript (ブラウザ) ]
+   勤務表グリッド（編集・D&D・色分け・ヒートマップ）／マスタ編集／ダッシュボード／ログイン
+        │  HTTP (JSON), 認証トークン
+        ▼
+[ FastAPI (Python) ]  ── 既存 shift_scheduler/ を import（無改造）
+   ・REST API（マスタCRUD・生成ジョブ投入・勤務表取得/編集・検証・出力・認証・確定/アーカイブ）
+   ・生成は別プロセスの「ジョブワーカー」へ委譲（HTTPを待たせない）
+        │              ▲
+        │ enqueue      │ progress / result
+        ▼              │
+[ Job Worker (Python) ]  ← run_schedule() をここで実行（数分かかり得る）
+   ・master_set を「現行と同じCSV形式」に materialize → run_schedule → 割り当てを凍結保存
+        │
+        ▼
+[ SQLite ]  users / master_set / 各マスタ / requests_import / jobs / rosters / roster_assignments / roster_edits / archives
+```
+- 院内サーバー（常時起動PC）1台に **Docker Compose**：`web`(React配信) / `api`(FastAPI) / `worker`(ジョブ) / `db`(SQLiteファイルボリューム)。
+- 既存パッケージはコンテナ内に同梱し、ワーカーから import。
+
+### 同時実行・安全性
+- ローダー/スケジューラはリクエスト毎にインスタンス化（既にそうなっている）。プロセスワイドのシングルトン無し。
+- 生成ジョブは**1ワーカーで直列実行**（決定性のため `num_workers=1`＋CPU過負荷回避）。
+
+---
+
+## 5. データモデル（SQLite）
+
+主要テーブル（カラムは代表例）：
+- **users**(id, name, login_id, password_hash, role ∈ {admin, editor, viewer}, created_at)
+- **master_set**(id, name, note, created_at, created_by, parent_set_id) … マスタを「版」として束ねる。複製して編集できる。
+- マスタ各表（master_set_id 外部キー）：
+  - **staff**(技師ID, 氏名, 性別, 経験年数, 夜勤可否, 在籍状況, 備考, 拘束可否)
+  - **skills**(技師ID, 場所コード, rank) … 縦持ち（保存時に横長CSVへ）
+  - **locations**(場所コード, 場所名, カテゴリ, mon..sun, 性別制約, 表示順, 有効)
+  - **power_balance**(場所コード, 最低ランク, 最低人数, CD上限, D単独禁止) … 同一コード複数行可
+  - **special_rules**(ルールID, 場所コード, 対象曜日, 対象週, 必要人数, ランク条件, ランク人数, 選出元場所, 選出元ランク, 備考)
+  - **training**(対象モダリティ, instructors(JSON/ID配列 or RANK_A_ONLY), trainees(ID配列), 表示名)
+  - **night_quota**(year_month, 技師ID, 回数)
+  - **night_overrides**(技師ID, mr, cath, angio ∈ {true,false,inherit})
+  - **holiday_targets**(year_month, 公休数)
+- **requests_import**(id, year_month, source_filename, imported_at, imported_by) ＋ **request_rows**(import_id, 技師ID解決, 日付, 記号, 元RSName, 解決ステータス)
+- **jobs**(id, year, month, master_set_id, request_import_id, status ∈ {queued,running,done,failed}, progress, log, error, created_by, created_at)
+- **rosters**(id, job_id, year, month, master_set_id, status ∈ {draft,confirmed}, created_by, confirmed_at)
+- **roster_assignments**(id, roster_id, 技師ID, date, kind ∈ {day,night,oncall}, location_or_role, symbol, locked bool) … 手修正・部分ロックの最小単位。**凍結された割り当て**そのもの。
+- **roster_meta**(roster_id, 技師ID, off_count, daikyu_count, …) … `off_counts`/`daikyu_counts` の保存
+- **roster_edits**(id, roster_id, user_id, at, 技師ID, date, before, after) … 監査ログ（Undo/Redoの履歴源）
+- **archives**(id, roster_id, year, month, xlsx_bytes BLOB, checksum, archived_at)
+
+---
+
+## 6. 中核：設定引き継ぎ＆Excel完全一致のパイプライン
+
+**materialize → solve → freeze → render** の4段で「同じ入力なら同じExcel」を構造的に保証する。
+
+1. **materialize**：生成時、選択 `master_set` ＋ 対象月の `request_import` を、**現行とバイト等価のCSV群**としてテンポラリ `data_dir` に書き出す。各マスタの細部（utf-8-sig有無、勤務場所2表構造＋セパレータ、夜勤回数のタイトル/footer、予定申請の月サフィックス）を厳密に再現する。
+2. **solve**：`run_schedule(year, month, data_dir, ...)` を**無改造ロジック**で実行。
+3. **freeze**：返ってきた割り当て・`off_counts`・`daikyu_counts` を `roster_assignments` / `roster_meta` に**凍結保存**。
+4. **render**：Excelダウンロードは**再計算せず**、凍結済み割り当て（**手修正反映後**）を `ExcelGenerator` に渡して生成。何度でも同じファイル。
+
+### 受け入れ基準（移行の信頼）
+- 既存の月（例：2026年6月）について、`master_set` を現行 `data/` から取り込み、同じ予定申請で生成した **Web版Excel が現行CLIのExcelと一致**する自動テストを用意（P1のゲート）。
+- 表示セルの再導出は**既存Pythonの導出ロジックをそのままAPI化**し、JS側で別実装しない（ズレ防止）。
+
+---
+
+## 7. 手修正エディタ＋検証エンジン
+
+### 編集モデル
+- 編集対象は**表示文字でなく `roster_assignments`（割り当てモデル）**。セル編集／ドラッグ＆ドロップ（人↔場所、日↔日）は内部割り当てを書き換える。
+- 書き換え後、**サーバーが表示文字を再導出**して返す（`_get_assignment_text` 相当をAPI化）。行順は技師マスタ順を厳守。
+- **Undo/Redo**は `roster_edits` を用いたスタックで実現。すべて監査ログに残る。
+
+### 検証＆統計（編集のたびにサーバーで再計算）
+返す警告：
+- **勤務不足の場所**：その日の `daily_location_needs`（必要人数）vs 実配置。不足数を返す。
+- **公休数が目標未満の人**：割り当てから公休/代休を**再計算**（`assign_monthly_off_days` 相当を割り当てベースで再実行）。あと何日かを返す。
+- **連続勤務**：7連勤等のウィンドウ検出。
+- **スキル/パワーバランス/夜勤スキル違反**：資格しきい値・最低ランク・最低人数・D単独禁止等。
+- 注意：公休/代休は割り当てに依存するため、**日セルを編集したら必ず再計算**（さもなくば該当列が黙って陳腐化する）。
+
+### 部分ロック→再生成
+- `roster_assignments.locked=true` のセルを**固定割り当て**として `run_schedule(..., locked_assignments=...)` に注入し、残りだけ解き直す。
+- 実装：各スケジューラに「指定 (staff,date,location) を必ず採用/除外する」ハード制約を1本足す小改修（ロジックの重み・順序は不変）。
+
+---
+
+## 8. 可視化・ダッシュボード
+
+- **グリッド色分け**：不足セル=赤、公休不足の人の行=警告色（残り日数バッジ）、連勤=強調、各種違反=アイコン＋ツールチップ。
+- **偏りヒートマップ**：場所別・個人別の割当回数を濃淡表示（CT+病CT、病院MR+CLMR のグルーピングは現行の公平性グルーピングに合わせる）。MRI偏りが一目で分かる。
+- **ダッシュボード**：個人別（勤務日数/公休/夜勤回数/各場所回数/代休）、場所別（日別充足）、公平性スコア（割当回数の分散など）。**修正前後で改善したか**を数値で見せる。
+
+---
+
+## 9. マスタ管理（CRUD）＋安全装置
+
+- 単純表（公休数・技師・夜勤スキル）→ 表エディタ。複雑マスタ（勤務場所/特殊配置ルール/業務拡大/夜勤回数）→ **構造化フォーム**（生CSVは触らせない）。保存時に §3.4 の現行CSV形式へ正確に書き戻す。
+- **入力検証**：技師ID一意・Tnnn形式、スキルは {A,B,C,D,-} のみ、公休数の `YYYY/MM` ゼロ埋め（`2026/4` は不可）、氏名の全角スペース整合、勤務場所Bの場所コードが既存A行を参照、夜勤回数の合計＝個別合計、業務拡大の名前がIDに解決可能、等。
+- **安全装置（最重要）**：生成前に、§3.5-1 の**コード固定の技師ID（T001/T013/T025/T072/T002/T022/T006/T023 等）が技師マスタに存在するか**を検証し、欠けたら**明確にエラー**（黙って壊れない）。あわせて、編集が夜勤適性（≥B）に影響する場合や、特殊配置ルールの未適用条件（`D同士禁止` 等）を編集した場合は**UI上で警告**する。
+- **予定申請**は取り込み専用：アップロード→（BOM/先頭空行/`Sample Data`行のスキップ）→未解決RSName報告→プレビュー→確定で `request_import` 化。`予定申請_YYYYMM.csv` 形式で保存し、汎用 `予定申請.csv` フォールバックによる古い月の誤用を防ぐ。
+
+---
+
+## 10. 認証・確定・履歴
+
+- 役割：**admin**（生成・マスタ編集・確定・ユーザー管理）／**editor**（手修正・再生成）／**viewer**（確定版の閲覧・DLのみ）。SQLite にユーザーとロールを保持（パスワードはハッシュ保存）。
+- **確定ロック**：roster を `confirmed` にすると、その月の確定版Excelバイトを `archives` に保存。viewer には確定版のみ表示。
+- **月別アーカイブ**：過去の確定版をいつでも閲覧・再DL。
+- **バックアップ**：SQLite＋アーカイブを日次でバックアップ（媒体は院内ITと調整）。
+
+---
+
+## 11. 既存コードへの最小改修（ロジック不変）
+
+優先順・低リスク：
+1. `run_schedule(...)` を `main()` 本体（`main.py:~1117-1432`）から抽出。`main()` は薄いCLIラッパーに。4つの後処理（pre_seed_rest_days/rebalance_workload/optimize_assignments_cpsat/assign_monthly_off_days）は引数駆動済みで変更不要。
+2. **構造化結果**を返す `ScheduleResult`：{day_assignments, night_assignments, oncall_assignments, daikyu_counts, off_counts, validation_errors, messages[], workbook_bytes}。
+3. **I/Oディレクトリ注入**：相対デフォルト `'shift_scheduler/data'`/`'output'`（CWD依存）をリクエストスコープのtempに置換。
+4. `ExcelGenerator.generate(target)` を **BytesIO 対応**（`wb.save` はストリーム可）。CLI向けのパス版も残す。
+5. 約80の `print(flush=True)` を **logging or messages[]** に置換（代休残存/不足/ソルバー状態を捕捉）。
+6. **ローダーの例外握り潰しを是正**（`load_all` 後の bare except→未定義 `staff_list` で後段NameError）。型付き例外を投げ、API側で 4xx/5xx に。
+7. `year`/`month` の**範囲検証**（argparse は int化のみ）。
+8. **`locked_assignments` 注入口**を各スケジューラに追加（部分ロック再生成、P4）。
+9.（多病院化の前提・v1範囲外）`qualifies()`/記号集合/バッファ/固定IDの**重複を1モジュールへ集約**。※**4コピーを先にdiff**（ドリフトの可能性）してから統合。
+
+決定性維持：`seed=42`・`num_workers=1`・決定論的時間停止は**変更しない**。
+
+---
+
+## 12. 段階リリース（“全部入りv1”への届け順）
+
+工数は度外視可だが、使える形を早く届け・リスクを刻むため次の順で：
+
+- **P1 基盤＋一致保証**：run_schedule抽出、materialize、生成ジョブ＋進捗、結果表示、**現行と同一Excel出力**（受け入れテストでゲート）。
+- **P2 手修正エディタ＋3警告**（中核価値）。→ **ここから管理者1人での院内試験運用が可能**。
+- **P3 マスタ管理CRUD＋安全装置**。
+- **P4 ヒートマップ・ダッシュボード・部分ロック再生成**。
+- **P5 認証・確定ロック・月別アーカイブ・バックアップ**。→ **閲覧者への公開はここ以降**。
+
+各フェーズに受け入れ基準（最低：P1=Excel一致、P2=編集→警告→Excel反映が一貫、P3=マスタ編集が生成に反映、全フェーズ=決定性）。
+
+---
+
+## 13. 設置・運用 / 院内IT調整チェックリスト
+
+- 院内サーバー/常時起動PC 1台、Docker Compose（web/api/worker/db）。
+- IT部門と確認：設置場所・固定ホスト名/IP・ファイアウォール（LAN内のみ公開）・バックアップ媒体・電源/常時起動・OSアップデート方針。
+- アクセスは院内LAN内限定（外部公開しない）。
+
+---
+
+## 14. 主なリスクと対策（マップ由来）
+
+| リスク | 根拠 | 対策 |
+|---|---|---|
+| 再生成でExcel不一致 | 決定的なのは描画のみ、solveが変動要因 | **割り当てを凍結**し、DLは凍結から描画（再solveしない） |
+| 編集グリッド↔源泉のズレ | セル文字は3ソースを優先順位合成、逆変換は曖昧 | **割り当てモデルを編集**し、サーバーで再導出。Python導出を単一経路に |
+| 統計列のドリフト | 21ラベルが3箇所に重複、文字列パース | ラベル/パーサを単一ソース化、JS再実装しない |
+| 公休/代休が陳腐化 | 外部 off/daikyu 由来 | 日セル編集時に off-day 割当を**再計算** |
+| 固定IDが再採番で黙って無効化 | CP-SATの `model.Add` 床に T001等 | 生成前に**全固定IDの存在を検証**、欠けたら失敗 |
+| 日勤がINFEASIBLE/timeoutで黙って劣化 | `day_scheduler.py:1246-1254` | ジョブが needs vs 実配置を**diff**して不足を検知 |
+| 長時間solve > HTTPタイムアウト | 決定120s+wall600s, 進捗コールバック無し | **バックグラウンドジョブ**、日次progress、プロセスkillで中断 |
+| 出力上書き/古い申請 | 固定ファイル名、汎用 `予定申請.csv` フォールバック | ジョブ毎に版管理、申請は月サフィックス保存 |
+| 日本暦/記号がコード散在 | 30+箇所/6関数 | v1は現状維持。多病院化時に注入式へ |
+
+---
+
+## 15. 未決事項（実装計画で詰める）
+- 認証の具体方式（v1はSQLiteのユーザー＋ロールで十分、パスワードハッシュ。SSO連携は将来）。
+- React のグリッド/D&Dライブラリ選定、状態管理。
+- バックアップ媒体・頻度の最終決定（院内IT次第）。
+- スキル/勤務場所マスタの「列追加（＝新しい場所コード）」をadmin限定でどこまで許すか。
+
+---
+
+## 16. スコープ外（再掲）
+- 休み希望入力（Power Apps継続）。
+- 他病院汎用化（ハードコード外出し）。
+- ソルバー精度の根治改善（当面は手修正で対応）。
