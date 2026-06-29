@@ -139,11 +139,50 @@ def _render_body(ws, grid):
 
 
 def _build_legend_sheet(wb):
-    return None
+    """記号 + Direction-A パレットの意味を静的に列挙。"""
+    ws = wb.create_sheet("凡例")
+    ws.cell(row=1, column=1, value="凡例").font = Font(size=14, bold=True)
+    rows = [
+        ("夜", "夜勤（濃紺・白字）", C_NIGHT),
+        ("明 / ○", "明け（薄グレー）", C_AKEMEI),
+        ("公休 / 休", "公休（薄緑）", C_OFF),
+        ("(希) / 希望休", "希望休（斜体・白）", None),
+        ("★ / ☆ / ◆", "特別休（★連・☆小・☆デ 等）", None),
+        ("17休", "17時以降休（時短）", None),
+        ("土", "土曜（薄青）", C_SAT),
+        ("日 / 祝", "日曜・祝日（薄赤）", C_SUNHOL),
+    ]
+    r = 3
+    for sym, desc, swatch in rows:
+        ws.cell(row=r, column=1, value=sym)
+        ws.cell(row=r, column=2, value=desc)
+        if swatch:
+            ws.cell(row=r, column=3).fill = _fill(swatch)
+        r += 1
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 40
 
 
 def _build_summary_sheet(wb, grid):
-    return None
+    """個人別集計シート: 勤務表番号・技師名 + 各 stats_columns（公休/夜勤/代休/各場所）。"""
+    ws = wb.create_sheet("集計")
+    center = Alignment(horizontal="center", vertical="center")
+    stats_cols = grid["stats_columns"]
+    header = ["勤務表番号", "技師名"] + list(stats_cols)
+    for i, h in enumerate(header, start=1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True)
+        c.alignment = center
+    r = 2
+    for row in grid["rows"]:
+        ws.cell(row=r, column=1, value=row["staff_num"])
+        ws.cell(row=r, column=2, value=row["name"])
+        # has_work=False は集計を出さず空欄のまま（legacy ゲートを踏襲）。
+        if row["has_work"] and row["stats"]:
+            for i, label in enumerate(stats_cols):
+                ws.cell(row=r, column=3 + i, value=row["stats"][label]).alignment = center
+        r += 1
+    ws.column_dimensions["B"].width = 14
 
 
 def _build_validation_sheet(wb, year, month, warnings):

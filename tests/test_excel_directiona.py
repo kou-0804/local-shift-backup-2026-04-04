@@ -108,3 +108,32 @@ def test_stats_block_written_for_working_row():
     # 公休 is the 20th of 21 stats labels -> column = 2 + days + 20
     col = 2 + 7 + (STATS.index("公休") + 1)
     assert ws.cell(row=4, column=col).value == 8
+
+
+def test_legend_and_summary_sheets_exist():
+    wb = _load()
+    assert "凡例" in wb.sheetnames
+    assert "集計" in wb.sheetnames
+
+
+def test_legend_explains_symbols_and_colours():
+    ws = _load()["凡例"]
+    blob = "\n".join(str(c.value) for col in ws.iter_cols() for c in col if c.value)
+    for token in ("夜", "明", "(希)", "★", "☆", "17休", "公休"):
+        assert token in blob
+
+
+def test_summary_lists_each_staff_with_key_counts():
+    ws = _load()["集計"]
+    header = [c.value for c in ws[1]]
+    for col in ("技師名", "公休", "夜勤", "代休"):
+        assert col in header
+    names = [ws.cell(row=r, column=2).value for r in range(2, ws.max_row + 1)]
+    assert "佐藤(海)" in names
+
+
+def test_summary_includes_per_location_columns():
+    ws = _load()["集計"]
+    header = [c.value for c in ws[1]]
+    for loc in ("病CT", "CT", "CLMR"):     # 各場所 from stats_columns
+        assert loc in header
