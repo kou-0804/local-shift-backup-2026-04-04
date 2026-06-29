@@ -1,10 +1,13 @@
+from typing import Any, Dict
 from urllib.parse import quote
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Response
+from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, Response
 from pydantic import BaseModel, conint
 
 from webapp.api.config import settings
+from webapp.api.db import get_db
 from webapp.api.jobs import JobStore, run_job
+from webapp.api import rosters as roster_ops
 from main import run_schedule
 
 app = FastAPI(title="勤務表 Web API", version="0.1.0")
@@ -61,3 +64,44 @@ def get_excel(job_id: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": disposition},
     )
+
+
+# --- P2a-2: roster editing backend (freeze / read / edit / undo / redo) ---
+
+
+@app.post("/jobs/{job_id}/freeze", status_code=201)
+def freeze_job(job_id: str, conn=Depends(get_db)):
+    job = store.get(job_id)
+    if job is None or job.result is None:
+        raise HTTPException(status_code=404, detail="result not available")
+    from shift_scheduler.src.loaders.data_loader import DataLoader
+    technicians = DataLoader(data_dir=settings.data_dir).load_all(
+        f"{job.year}-{job.month:02d}")[0]
+    rid = roster_ops.freeze_roster(
+        conn, job_id=job_id, result=job.result, technicians=technicians,
+        data_dir=settings.data_dir, target_holidays=9)
+    return {"roster_id": rid}
+
+
+def _roster_or_404(conn, rid):
+    hdr = conn.execute("SELECT id FROM rosters WHERE id=?", (rid,)).fetchone()
+    if hdr is None:
+        raise HTTPException(status_code=404, detail="roster not found")
+
+
+@app.get("/rosters/{rid}")
+def get_roster(rid: int, conn=Depends(get_db)):
+    _roster_or_404(conn, rid)
+    grid, d = roster_ops.build_roster_grid(conn, rid)
+    # Contract reconciliation (P2d): top-level year/month so the client can build
+    # ISO dates for edit payloads.
+    return {"version": d["version"], "status": d["status"],
+            "year": d["year"], "month": d["month"],
+            "grid": grid, "warnings": roster_ops.roster_warnings(d)}
+
+
+@app.get("/rosters/{rid}/grid")
+def get_roster_grid(rid: int, conn=Depends(get_db)):
+    _roster_or_404(conn, rid)
+    grid, _ = roster_ops.build_roster_grid(conn, rid)
+    return grid

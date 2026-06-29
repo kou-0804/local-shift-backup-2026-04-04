@@ -44,7 +44,9 @@ def connect(path: str) -> sqlite3.Connection:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(path)
+    # check_same_thread=False: FastAPI runs sync endpoints in a threadpool, so a
+    # per-request (or test-shared) connection is touched from a worker thread.
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     return conn

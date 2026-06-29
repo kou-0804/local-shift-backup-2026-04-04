@@ -1,9 +1,19 @@
+import calendar
 import json
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 from shift_scheduler.src.grid_derivation import build_grid
-from shift_scheduler.src.stats_engine import recompute_stats
+from shift_scheduler.src.stats_engine import recompute_stats, _is_public_off
+
+
+def _month_holidays(year, month):
+    """Public holidays for the month as ISO date strings, using the SAME rule as
+    stats_engine._is_public_off: Sundays + 祝日(jpholiday) + Jan 1-3. Saturdays
+    are NOT public holidays. The UI shades these days."""
+    n = calendar.monthrange(year, month)[1]
+    return [date(year, month, d).isoformat()
+            for d in range(1, n + 1) if _is_public_off(date(year, month, d))]
 
 
 def _now():
@@ -123,3 +133,37 @@ def roster_to_dicts(conn, roster_id) -> dict:
         "locked": locked, "version": hdr["version"], "edit_cursor": hdr["edit_cursor"],
         "status": hdr["status"],
     }
+
+
+def _locked_cells(conn, roster_id):
+    out = {}
+    for r in conn.execute(
+            "SELECT staff_id,date,locked FROM roster_assignments "
+            "WHERE roster_id=? AND kind='day'", (roster_id,)):
+        if r["locked"]:
+            out[(r["staff_id"], _day_of(r["date"]))] = True
+    return out
+
+
+def build_roster_grid(conn, roster_id, *, cells=None):
+    d = roster_to_dicts(conn, roster_id)
+    off = {r["staff_id"]: r["off_count"] for r in conn.execute(
+        "SELECT staff_id,off_count FROM roster_meta WHERE roster_id=?", (roster_id,))}
+    daikyu = {r["staff_id"]: r["daikyu_count"] for r in conn.execute(
+        "SELECT staff_id,daikyu_count FROM roster_meta WHERE roster_id=?", (roster_id,))}
+    grid = build_grid(d["year"], d["month"], d["technicians"],
+                      d["day_assignments"], d["night_assignments"], d["requests"],
+                      off_counts=off, daikyu_counts=daikyu,
+                      on_call_assignments=d["on_call_assignments"], cells=cells)
+    # Contract reconciliation (P2d): the grid response carries the month's public
+    # holidays as ISO strings so the UI can shade them (build_grid already sets
+    # top-level year/month).
+    grid["holidays"] = _month_holidays(d["year"], d["month"])
+    return grid, d
+
+
+def roster_warnings(d):
+    return recompute_stats(
+        d["day_assignments"], d["night_assignments"], d["requests"],
+        d["technicians"], d["year"], d["month"], d["target_holidays"],
+        daily_location_needs=d["daily_location_needs"])
