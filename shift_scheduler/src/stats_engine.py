@@ -85,3 +85,100 @@ def recompute_off_daikyu(day_assignments, night_assignments, requests,
         dk = max(0.0, target_holidays - off)
         daikyu_counts[sid] = dk
     return off_counts, daikyu_counts
+
+
+from collections import defaultdict
+
+
+def _day_of(iso_or_day):
+    """Accept 'YYYY-MM-DD', date, or int day -> int day."""
+    if isinstance(iso_or_day, int):
+        return iso_or_day
+    if isinstance(iso_or_day, date):
+        return iso_or_day.day
+    return int(str(iso_or_day).split('-')[2])
+
+
+def recompute_stats(day_assignments, night_assignments, requests, technicians,
+                    year, month, target_holidays, *,
+                    daily_location_needs=None, staff_scope=None):
+    """Solver-free recompute of off/daikyu/coverage/holiday_deficit/consecutive/
+    night-HB. Mirrors main.py:19-185 (via recompute_off_daikyu) + main.py:1210-1225.
+    Returns a plain JSON-able dict. `skill`/PB warnings are P3 (not here)."""
+    num_days = calendar.monthrange(year, month)[1]
+    active = [t for t in technicians if getattr(t, 'status', '在籍') == '在籍']
+    if staff_scope is not None:
+        active = [t for t in active if t.id in staff_scope]
+    staff_ids = [t.id for t in active]
+
+    off_counts, daikyu_counts = recompute_off_daikyu(
+        day_assignments, night_assignments, requests,
+        staff_ids, year, month, target_holidays)
+
+    # holiday_deficit mirrors daikyu (off < target).
+    holiday_deficit = [
+        {"staff_id": sid, "off": off_counts[sid], "target": target_holidays,
+         "short": round(target_holidays - off_counts[sid], 1)}
+        for sid in staff_ids if off_counts[sid] < target_holidays
+    ]
+
+    # consecutive: any run of work-status days >= 7. Reuse the P2a-1 classifier so
+    # status semantics are identical; 出/☆ half counts as work (main.py:946-949).
+    consecutive = []
+    for sid in staff_ids:
+        run = 0
+        start_day = None
+        for dn in range(1, num_days + 1):
+            d = date(year, month, dn)
+            st = _classify(sid, d, dn, day_assignments, night_assignments, requests)
+            working = st in ('work', 'half')
+            if working:
+                if run == 0:
+                    start_day = dn
+                run += 1
+                if run >= 7:
+                    consecutive.append({
+                        "staff_id": sid,
+                        "start": date(year, month, start_day).isoformat(),
+                        "len": run})
+            else:
+                run = 0
+
+    # coverage vs daily_location_needs (fold クL->ク; skip parenthesized).
+    coverage = []
+    if daily_location_needs:
+        assigned_by_day = defaultdict(lambda: defaultdict(list))
+        for dn, locs in day_assignments.items():
+            for loc, ids in locs.items():
+                assigned_by_day[int(dn)][loc].extend(ids)
+        for key, loc_needs in daily_location_needs.items():
+            dn = _day_of(key)
+            for loc_code, required in loc_needs.items():
+                if loc_code.startswith('(') and loc_code.endswith(')'):  # main.py:1213
+                    continue
+                if not required or required <= 0:
+                    continue
+                assigned = len(assigned_by_day[dn].get(loc_code, []))
+                if loc_code == 'ク':
+                    assigned += len(assigned_by_day[dn].get('クL', []))  # fold
+                if assigned < required:
+                    coverage.append({
+                        "date": date(year, month, dn).isoformat(),
+                        "location": loc_code, "required": required,
+                        "assigned": assigned, "short": required - assigned})
+
+    # night-HB gaps (main.py:1218-1225).
+    by_id = {t.id: t for t in technicians}
+    night_hb_gaps = [
+        int(dn) for dn, ids in night_assignments.items()
+        if not any(getattr(by_id.get(i), 'night_hb', False) for i in ids)
+    ]
+
+    return {
+        "off_counts": off_counts,
+        "daikyu_counts": daikyu_counts,
+        "holiday_deficit": holiday_deficit,
+        "coverage": coverage,
+        "consecutive": consecutive,
+        "night_hb_gaps": sorted(night_hb_gaps),
+    }
