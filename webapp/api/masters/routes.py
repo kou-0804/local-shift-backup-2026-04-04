@@ -1,16 +1,50 @@
 """FastAPI router for master management: per-master CRUD + clone + (Task 6)
 safety-check + (Task 7) 予定申請 import. Included from ``webapp/api/main.py``.
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from webapp.api.db import get_db
+from webapp.api.requests_import import preview_requests, store_requests
 from . import crud
 from .safety import LOAD_BEARING_IDS, SafetyError, assert_load_bearing_ids
 from .validation import ValidationError
 
 router = APIRouter(prefix="/masters", tags=["masters"])
+
+
+def _name_to_id(conn, master_set_id: Optional[int]) -> dict:
+    if master_set_id is None:
+        return {}
+    return {r["name"]: r["tech_id"] for r in conn.execute(
+        "SELECT name,tech_id FROM ms_staff WHERE master_set_id=?", (master_set_id,))}
+
+
+# --- 予定申請 import (import-only, NOT CRUD) --------------------------------
+# The CSV is POSTed as the raw request body (text/csv or octet-stream). Reading
+# raw bytes keeps the stored BLOB byte-exact and avoids a python-multipart dep.
+
+@router.post("/requests/preview")
+async def requests_preview(request: Request,
+                           master_set_id: Optional[int] = Query(default=None),
+                           conn=Depends(get_db)):
+    raw = await request.body()
+    return preview_requests(raw, _name_to_id(conn, master_set_id))
+
+
+@router.post("/requests/{year}/{month}", status_code=201)
+async def requests_commit(request: Request, year: int, month: int,
+                          master_set_id: Optional[int] = Query(default=None),
+                          imported_by: str = Query(default=""),
+                          source_filename: str = Query(default="予定申請.csv"),
+                          conn=Depends(get_db)):
+    raw = await request.body()
+    imp_id = store_requests(conn, year=year, month=month, raw=raw,
+                            source_filename=source_filename,
+                            imported_by=imported_by,
+                            name_to_id=_name_to_id(conn, master_set_id))
+    return {"import_id": imp_id}
 
 
 def _422(exc: ValidationError):
