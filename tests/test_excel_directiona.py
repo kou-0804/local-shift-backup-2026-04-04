@@ -68,3 +68,43 @@ def test_weekend_and_holiday_columns_are_shaded():
     sun = ws.cell(row=2, column=2 + 7)   # day 7 = 日
     assert fill_hex(sat) == "DDEBF7"     # 薄青
     assert fill_hex(sun) == "FCE4D6"     # 薄赤
+
+
+def test_freeze_panes_locks_name_cols_and_header_rows():
+    ws = _load().worksheets[0]
+    assert ws.freeze_panes == "C4"
+
+
+def test_night_cell_is_navy_with_white_font():
+    from tests.golden.xlsx_dump import fill_hex
+    ws = _load().worksheets[0]
+    c = ws.cell(row=4, column=2 + 2)    # T001 day2 = 病CT夜 (kind=night)
+    assert c.value == "病CT夜"
+    assert fill_hex(c) == "1F3864"
+    assert (c.font.color.rgb or "")[-6:] == "FFFFFF"
+
+
+def test_akemei_grey_off_green_request_italic():
+    from tests.golden.xlsx_dump import fill_hex
+    ws = _load().worksheets[0]
+    assert fill_hex(ws.cell(row=4, column=2 + 3)) == "D9D9D9"   # ○  akemei
+    assert fill_hex(ws.cell(row=4, column=2 + 4)) == "E2EFDA"   # 休 off
+    assert fill_hex(ws.cell(row=4, column=2 + 5)) == "E2EFDA"   # ☆ special_off
+    assert ws.cell(row=4, column=2 + 7).font.italic is True     # 希望休 request
+
+
+def test_oncall_row_has_thick_duty_border():
+    ws = _load().worksheets[0]
+    # one row of staff (row4) then the 第1拘束 row at row5
+    label = ws.cell(row=5, column=1).value
+    assert label == "第1拘束"
+    cell = ws.cell(row=5, column=2 + 1)            # 佐藤海 on day 1
+    assert cell.value == "佐藤海"
+    assert cell.border.left.style == "medium"
+
+
+def test_stats_block_written_for_working_row():
+    ws = _load().worksheets[0]
+    # 公休 is the 20th of 21 stats labels -> column = 2 + days + 20
+    col = 2 + 7 + (STATS.index("公休") + 1)
+    assert ws.cell(row=4, column=col).value == 8

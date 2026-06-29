@@ -92,8 +92,50 @@ def render_directiona(grid: dict, *, warnings=None) -> bytes:
 # --- Task 5/6/7 helpers (filled in by later tasks) ---
 
 
+def _style_for(kind):
+    """(fill_or_None, font_or_None) for a body cell, keyed off kind (Direction-A)."""
+    if kind == "night":
+        return _fill(C_NIGHT), Font(color="FFFFFF")
+    if kind == "akemei":
+        return _fill(C_AKEMEI), None
+    if kind in ("off", "special_off"):
+        return _fill(C_OFF), None
+    if kind == "request":
+        return None, Font(italic=True)          # 希望休 = 斜体
+    return None, None                            # work / empty = 白
+
+
 def _render_body(ws, grid):
-    return None
+    center = Alignment(horizontal="center", vertical="center")
+    days = grid["days_in_month"]
+    stats_cols = grid["stats_columns"]
+    r = _FIRST_DATA_ROW
+    for row in grid["rows"]:
+        ws.cell(row=r, column=1, value=row["staff_num"])
+        ws.cell(row=r, column=2, value=row["name"])
+        for d in range(1, days + 1):
+            text = row["cells"].get(d, "")
+            kind = row["cell_meta"].get(d, {}).get("kind", "empty")
+            c = ws.cell(row=r, column=_day_col(d), value=text)
+            c.alignment = center
+            fill, font = _style_for(kind)
+            if fill:
+                c.fill = fill
+            if font:
+                c.font = font
+        if row["has_work"] and row["stats"]:
+            for i, label in enumerate(stats_cols):
+                ws.cell(row=r, column=_NAME_COLS + days + 1 + i,
+                        value=row["stats"][label]).alignment = center
+        r += 1
+    # On-call rows with the 拘束 太枠.
+    for oc in grid["oncall_rows"]:
+        ws.cell(row=r, column=1, value=oc["label"])
+        for d in range(1, days + 1):
+            c = ws.cell(row=r, column=_day_col(d), value=oc["cells"].get(d, ""))
+            c.alignment = center
+            c.border = _DUTY_BORDER
+        r += 1
 
 
 def _build_legend_sheet(wb):
