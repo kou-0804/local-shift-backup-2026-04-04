@@ -8,6 +8,7 @@ from webapp.api.config import settings
 from webapp.api.db import get_db
 from webapp.api.jobs import JobStore, run_job
 from webapp.api import rosters as roster_ops
+from shift_scheduler.src.excel_directiona import render_directiona
 from main import run_schedule
 
 app = FastAPI(title="勤務表 Web API", version="0.1.0")
@@ -134,3 +135,35 @@ def post_redo(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
         return roster_ops.redo(conn, rid, payload)
     except roster_ops.ConcurrencyError as exc:
         raise HTTPException(status_code=409, detail=exc.grid)
+
+
+def _format_warnings(rc: dict, month: int) -> list:
+    """recompute_stats の構造化警告を検証シート用の日本語文字列へ整形。
+    実際の recompute_stats キー（coverage / night_hb_gaps）に合わせる。"""
+    out = []
+    for u in rc.get("coverage", []):
+        day = int(u["date"].split("-")[2])
+        out.append(f"{month}月{day}日: [{u['location']}] の配置人数が不足しています "
+                   f"(目標: {u['required']}人 / 実際: {u['assigned']}人)")
+    for day in rc.get("night_hb_gaps", []):
+        out.append(f"{month}月{int(day)}日: "
+                   "夜勤メンバーにHB対応可能者がいないため代替処理を行いました")
+    return out
+
+
+@app.get("/rosters/{rid}/excel")
+def get_roster_excel(rid: int, conn=Depends(get_db)):
+    """凍結ロスターから Direction-A Excel を生成して配信。
+    build_grid → recompute_stats(live) → render_directiona の順で派生はレンダラ外。"""
+    _roster_or_404(conn, rid)
+    grid, d = roster_ops.build_roster_grid(conn, rid)
+    rc = roster_ops.roster_warnings(d)
+    xlsx = render_directiona(grid, warnings=_format_warnings(rc, d["month"]))
+    filename = f"勤務表_{d['year']}年{d['month']}月.xlsx"
+    # RFC 5987: non-ASCII filenames must be percent-encoded (HTTP headers are latin-1).
+    disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": disposition},
+    )
