@@ -47,19 +47,27 @@ class ExcelGenerator:
         self.ws = self.wb.active
         self.ws.title = f"{month}月勤務表"
     
-    def generate(self, output_path: str):
-        """Excel生成"""
+    def generate(self, target):
+        """Excel生成。target はファイルパス(str)またはバイナリストリーム。"""
         self._create_header()
         self._create_day_header()
         self._create_weekday_row()
         self._fill_assignments()
         self._apply_formatting()
-        
+
         if self.validation_errors is not None:
             self._create_validation_report_sheet()
-        
-        self.wb.save(output_path)
-        print(f"✓ 勤務表を保存: {output_path}")
+
+        self.wb.save(target)
+        if isinstance(target, str):
+            print(f"✓ 勤務表を保存: {target}")
+
+    def generate_bytes(self) -> bytes:
+        """レンダリング結果を .xlsx バイト列で返す（Web配信・凍結保存用）。"""
+        from io import BytesIO
+        buf = BytesIO()
+        self.generate(buf)
+        return buf.getvalue()
     
     def _create_header(self):
         """タイトル行"""
