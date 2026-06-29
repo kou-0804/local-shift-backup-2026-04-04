@@ -42,7 +42,7 @@ function extractConflictDetail(parsed: unknown): WireConflictDetail {
   if (parsed && typeof parsed === 'object') {
     const obj = parsed as Record<string, unknown>;
     if (obj.detail && typeof obj.detail === 'object') return obj.detail as WireConflictDetail;
-    return obj as WireConflictDetail;
+    return obj as unknown as WireConflictDetail;
   }
   return { version: 0 };
 }

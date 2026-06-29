@@ -29,6 +29,15 @@ export function ScheduleGrid({ state, onCellClick, onDragEnd }: Props) {
     overscan: 12,
   });
 
+  // When the scroll container has no measurable height (jsdom/SSR/first paint),
+  // the virtualizer yields no items — fall back to rendering every row so the
+  // grid is never blank.
+  const virtualItems = rowVirt.getVirtualItems();
+  const renderRows =
+    virtualItems.length > 0
+      ? virtualItems.map((vi) => ({ row: state.rows[vi.index], start: vi.start, key: state.rows[vi.index].staffId }))
+      : state.rows.map((row, i) => ({ row, start: i * 28, key: row.staffId }));
+
   return (
     <DndContext onDragEnd={onDragEnd}>
       <div ref={parentRef} className="grid-scroll">
@@ -69,26 +78,23 @@ export function ScheduleGrid({ state, onCellClick, onDragEnd }: Props) {
             </tr>
           </thead>
           <tbody style={{ height: rowVirt.getTotalSize(), position: 'relative' }}>
-            {rowVirt.getVirtualItems().map((vi) => {
-              const row = state.rows[vi.index];
-              return (
-                <tr key={row.staffId} style={{ transform: `translateY(${vi.start}px)` }}>
-                  <td className="sticky-name name-cell">{row.staffNum}</td>
-                  <td className="sticky-name name-cell">{row.name}</td>
-                  {days.map((d) => (
-                    <DayCell
-                      key={d}
-                      staffId={row.staffId}
-                      cell={row.cells.get(d)}
-                      onClick={onCellClick}
-                      highlighted={highlighted.has(cellKey({ staffId: row.staffId, day: d }))}
-                      heatColor={heatColorForCell(heatmapMode, state, row, d)}
-                    />
-                  ))}
-                  <StatsCells row={row} statsColumns={state.statsColumns} />
-                </tr>
-              );
-            })}
+            {renderRows.map(({ row, start, key }) => (
+              <tr key={key} style={{ transform: `translateY(${start}px)` }}>
+                <td className="sticky-name name-cell">{row.staffNum}</td>
+                <td className="sticky-name name-cell">{row.name}</td>
+                {days.map((d) => (
+                  <DayCell
+                    key={d}
+                    staffId={row.staffId}
+                    cell={row.cells.get(d)}
+                    onClick={onCellClick}
+                    highlighted={highlighted.has(cellKey({ staffId: row.staffId, day: d }))}
+                    heatColor={heatColorForCell(heatmapMode, state, row, d)}
+                  />
+                ))}
+                <StatsCells row={row} statsColumns={state.statsColumns} />
+              </tr>
+            ))}
             <OnCallRows rows={state.oncallRows} days={days} />
           </tbody>
         </table>
