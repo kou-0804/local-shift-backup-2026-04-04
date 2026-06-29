@@ -39,9 +39,20 @@ class ExcelGenerator:
         
         # 核医学・放射線治療のスタッフIDセット（表示制御用）
         self.nuc_tx_ids = {t.id for t in technicians if t.note and ('核医学' in t.note or '治療' in t.note)}
-        
-        self.days_in_month = calendar.monthrange(year, month)[1]
-        
+
+        # 単一ソース: build_grid がセルテキスト・色(text駆動)・集計・拘束行を導出。
+        # ExcelGenerator はこの dict を openpyxl へ配置するだけ（導出ゼロ）。
+        from .grid_derivation import build_grid
+        self.grid = build_grid(
+            year=year, month=month, technicians=technicians,
+            day_assignments=day_assignments, night_assignments=night_assignments,
+            requests=requests, off_counts=self.off_counts,
+            daikyu_counts=self.daikyu_counts,
+            on_call_assignments=self.on_call_assignments,
+        )
+        self.days_in_month = self.grid["days_in_month"]
+        self.stats_columns = self.grid["stats_columns"]
+
         # ワークブック作成
         self.wb = openpyxl.Workbook()
         self.ws = self.wb.active
@@ -123,113 +134,50 @@ class ExcelGenerator:
 
 
     def _fill_assignments(self):
-        """配置を記入"""
+        """配置を記入（build_grid から描画。導出・集計は grid_derivation に委譲）。"""
         row = 4
-        
-        for tech in self.technicians:
-            if tech.status != '在籍':
-                continue
-            
-            # 技師番号・氏名
-            try:
-                tech_num = int(tech.id.replace('T', ''))
-            except:
-                tech_num = tech.id
-                
-            self.ws[f'A{row}'] = tech_num
-            self.ws[f'B{row}'] = tech.name
-            
-            # カウンター初期化
-            if not hasattr(self, 'stats_columns'):
-                self.stats_columns = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精', 'MG', 'DR', 'HB', 'OP', '入', '病L', '超遅', 'ク遅', 'M遅', '公休', '代休']
-            counts = {label: 0 for label in self.stats_columns}
-            # 実勤務（勤務地アサイン）が1件も無い行＝当月スケジュール対象外・全休・育休等は
-            # 集計を出さない（空白セルが全日「休」と数えられ公休=月日数になる無意味な値を避ける）。
-            # 勤務地コード = 撮影部の業務 + 外部部門(PET/RI/放治/TV/館山)。
-            # 休・☆・育休・出・講・全会・研 等は勤務地アサインに含めない。
-            WORK_LOCATION_CODES = {
-                '病院MR', 'CLMR', 'CT', '病CT', 'ア', '心', 'ク', 'クL', 'ポ', '精',
-                'MG', 'DR', 'HB', 'OP', 'PICC', '入', '病L', '超遅', 'ク遅', 'M遅',
-                '館山', 'TV', 'PET', 'RI', '放治', 'DX',
-            }
-            row_has_work = False
+        stats_start_col = self.days_in_month + 3
 
-            # 各日の配置
+        # 技師行（build_grid["rows"] の順序＝技師マスタ順をそのまま保持）
+        for grow in self.grid["rows"]:
+            self.ws[f'A{row}'] = grow["staff_num"]
+            self.ws[f'B{row}'] = grow["name"]
+
             for day in range(1, self.days_in_month + 1):
                 col = self._day_to_column(day)
-                cell_value = self._get_assignment_text(tech.id, day)
+                cell_value = grow["cells"].get(day, "")
                 self.ws[f'{col}{row}'] = cell_value
                 self.ws[f'{col}{row}'].alignment = Alignment(horizontal='center')
-                
-                # 色分け
-                fill = self._get_cell_fill(tech.id, day, cell_value)
-                if fill:
-                    self.ws[f'{col}{row}'].fill = fill
-                
-                # 統計カウント
-                if '夜' in cell_value:
-                    counts['夜勤'] += 1
 
-                # 日勤カウント (cell_value might be "CT", "CT/夜", "入")
-                # Split by '/' if composite
-                # さらに「日勤＋夜勤」が "病CT夜"・"CLMR夜(希)" のようにスラッシュ無しで
-                # 連結されるケースは、末尾の "(希)"・"夜" を剥がして業務名へ正規化してから
-                # 一致させ、日勤業務としても計上する（夜勤列は上の '夜' 判定で別途 +1 済み）。
-                parts = cell_value.split('/')
-                for p in parts:
-                    p = p.strip()
-                    if p.endswith('(希)'):
-                        p = p[:-3]
-                    elif p.endswith('（希）'):
-                        p = p[:-3]
-                    if p.endswith('夜'):
-                        p = p[:-1]
-                    if p in WORK_LOCATION_CODES:
-                        row_has_work = True
-                    if p == 'クL':   # クL(クリニックリーダー)はクの内数として集計
-                        p = 'ク'
-                    if p in counts:
-                        counts[p] += 1
-            
-            # 公休・代休カウント（assign_monthly_off_days の計算結果を使用）
-            counts['公休'] = self.off_counts.get(tech.id, 0)
-            counts['代休'] = self.daikyu_counts.get(tech.id, 0)
-            
-            # 統計出力（実勤務が無い行は、空白セルが全日「休」と数えられ公休=月日数 等の
-            # 無意味な値になるため、集計列を出さず空欄のままにする）
-            if row_has_work:
-                stats_start_col = self.days_in_month + 3
+                # 色分けは最終テキスト駆動（cell_meta["fill"] == cell_fill(text)）。
+                hex_color = grow["cell_meta"].get(day, {}).get("fill")
+                if hex_color:
+                    self.ws[f'{col}{row}'].fill = PatternFill(
+                        start_color=hex_color, end_color=hex_color, fill_type='solid')
+
+            # 統計出力（実勤務が無い行は build_grid が stats=None とするため空欄のまま）
+            if grow["has_work"] and grow["stats"] is not None:
                 for i, label in enumerate(self.stats_columns):
                     col_idx = stats_start_col + i
                     col_letter = openpyxl.utils.get_column_letter(col_idx)
-                    self.ws[f'{col_letter}{row}'] = counts[label]
+                    self.ws[f'{col_letter}{row}'] = grow["stats"][label]
                     self.ws[f'{col_letter}{row}'].alignment = Alignment(horizontal='center')
 
             row += 1
 
-        # Add On-Call rows
-        if self.on_call_assignments:
-            oncall_labels = ['第1拘束', '第2拘束']
-            staff_dict = {t.id: t.name for t in self.technicians}
-            
-            for label in oncall_labels:
-                self.ws[f'A{row}'] = ''
-                self.ws[f'B{row}'] = label
-                
-                for day in range(1, self.days_in_month + 1):
-                    col = self._day_to_column(day)
-                    
-                    assigned_staff_id = self.on_call_assignments.get(day, {}).get(label)
-                    if assigned_staff_id:
-                        # Extract lastname for shorter display
-                        name = staff_dict.get(assigned_staff_id, assigned_staff_id)
-                        # Name usually looks like '佐藤(海)'. User's template shows '佐藤海'.
-                        # I'll strip parentheses for oncall display
-                        name = name.replace('(', '').replace(')', '').replace(' ', '').replace('　', '')
-                        self.ws[f'{col}{row}'] = name
-                    self.ws[f'{col}{row}'].alignment = Alignment(horizontal='center')
-                    
-                row += 1
+        # 拘束行（build_grid["oncall_rows"]、氏名は整形済み）
+        for oc in self.grid["oncall_rows"]:
+            self.ws[f'A{row}'] = ''
+            self.ws[f'B{row}'] = oc["label"]
+
+            for day in range(1, self.days_in_month + 1):
+                col = self._day_to_column(day)
+                name = oc["cells"].get(day, "")
+                if name:
+                    self.ws[f'{col}{row}'] = name
+                self.ws[f'{col}{row}'].alignment = Alignment(horizontal='center')
+
+            row += 1
 
     def _get_assignment_text(self, tech_id: str, day: int) -> str:
         """配置テキストを取得（単一ソース: grid_derivation へ委譲）"""
