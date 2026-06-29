@@ -2,6 +2,7 @@ import os
 import sqlite3
 
 from webapp.api.config import settings
+from webapp.api.masters.schema import init_master_db
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS rosters (
@@ -55,6 +56,8 @@ def connect(path: str) -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     conn.commit()
+    # P3a: additive master-management tables (does not touch roster tables).
+    init_master_db(conn)
 
 
 def get_db():
