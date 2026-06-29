@@ -1,4 +1,6 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from urllib.parse import quote
+
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Response
 from pydantic import BaseModel, conint
 
 from webapp.api.config import settings
@@ -34,3 +36,28 @@ def get_job(job_id: str):
         raise HTTPException(status_code=404, detail="job not found")
     return {"id": job.id, "year": job.year, "month": job.month,
             "status": job.status, "error": job.error}
+
+
+def _require_done(job_id: str):
+    job = store.get(job_id)
+    if job is None or job.result is None:
+        raise HTTPException(status_code=404, detail="result not available")
+    return job
+
+
+@app.get("/jobs/{job_id}/result")
+def get_result(job_id: str):
+    return _require_done(job_id).result.as_dict()
+
+
+@app.get("/jobs/{job_id}/excel")
+def get_excel(job_id: str):
+    job = _require_done(job_id)
+    filename = f"勤務表_{job.year}年{job.month}月.xlsx"
+    # RFC 5987: non-ASCII filenames must be percent-encoded (HTTP headers are latin-1).
+    disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=job.result.workbook_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": disposition},
+    )
