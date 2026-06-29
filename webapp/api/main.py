@@ -116,3 +116,21 @@ def post_edit(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
         return roster_ops.apply_edit(conn, rid, payload)
     except roster_ops.ConcurrencyError as exc:
         raise HTTPException(status_code=409, detail=exc.grid)
+
+
+@app.post("/rosters/{rid}/undo")
+def post_undo(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
+    _roster_or_404(conn, rid)
+    try:
+        return roster_ops.undo(conn, rid, payload)
+    except roster_ops.ConcurrencyError as exc:
+        raise HTTPException(status_code=409, detail=exc.grid)
+
+
+@app.post("/rosters/{rid}/redo")
+def post_redo(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
+    _roster_or_404(conn, rid)
+    try:
+        return roster_ops.redo(conn, rid, payload)
+    except roster_ops.ConcurrencyError as exc:
+        raise HTTPException(status_code=409, detail=exc.grid)

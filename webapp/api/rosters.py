@@ -370,3 +370,62 @@ def apply_edit(conn, rid, payload, *, user_id=None):
         "changed_cells": changed, "stats": stats,
         "warnings": _warnings_payload(warnings),
         "undo_available": seq > 0, "redo_available": redo}
+
+
+# --- Undo / Redo (linear history + cursor; full-row snapshots) ---
+
+
+def _undo_redo(conn, rid, payload, *, redo):
+    hdr = conn.execute("SELECT version,edit_cursor,year,month FROM rosters WHERE id=?",
+                       (rid,)).fetchone()
+    if hdr is None:
+        raise KeyError(rid)
+    year, month = hdr["year"], hdr["month"]
+    if payload.get("expected_version") != hdr["version"]:
+        grid, d = build_roster_grid(conn, rid)
+        raise ConcurrencyError({"version": hdr["version"], "grid": grid,
+                                "warnings": roster_warnings(d)})
+    cursor = hdr["edit_cursor"]
+    target_seq = cursor + 1 if redo else cursor
+    if target_seq <= 0:
+        raise ConcurrencyError({"version": hdr["version"], "reason": "nothing to undo"})
+    edit = conn.execute(
+        "SELECT * FROM roster_edits WHERE roster_id=? AND seq=? AND undone=?",
+        (rid, target_seq, 0 if not redo else 1)).fetchone()
+    if edit is None:
+        raise ConcurrencyError({"version": hdr["version"],
+                                "reason": "nothing to redo" if redo else "nothing to undo"})
+
+    snap = json.loads(edit["after_json"] if redo else edit["before_json"])
+    cells = {(r["staff_id"], _day_of(r["date"])) for r in
+             json.loads(edit["before_json"]) + json.loads(edit["after_json"])}
+    _restore_rows(conn, rid, cells, snap, year, month)
+    conn.execute("UPDATE roster_edits SET undone=? WHERE id=?",
+                 (0 if redo else 1, edit["id"]))
+    new_cursor = cursor + 1 if redo else cursor - 1
+    new_version = hdr["version"] + 1
+    conn.execute("UPDATE rosters SET version=?, edit_cursor=? WHERE id=?",
+                 (new_version, new_cursor, rid))
+
+    affected_staff = {sid for sid, _ in cells}
+    warnings, _, _ = _recompute_and_persist(conn, rid, affected_staff)
+    grid, _ = build_roster_grid(conn, rid, cells=cells)
+    changed = _changed_cells(conn, rid, grid, cells, year, month)
+    stats = {r["staff_id"]: r["stats"] for r in grid["rows"]}
+    conn.commit()
+    redo_avail = conn.execute(
+        "SELECT 1 FROM roster_edits WHERE roster_id=? AND seq=? AND undone=1",
+        (rid, new_cursor + 1)).fetchone() is not None
+    return {
+        "edit_id": edit["id"], "seq": new_cursor, "version": new_version,
+        "changed_cells": changed, "stats": stats,
+        "warnings": _warnings_payload(warnings),
+        "undo_available": new_cursor > 0, "redo_available": redo_avail}
+
+
+def undo(conn, rid, payload):
+    return _undo_redo(conn, rid, payload, redo=False)
+
+
+def redo(conn, rid, payload):
+    return _undo_redo(conn, rid, payload, redo=True)
