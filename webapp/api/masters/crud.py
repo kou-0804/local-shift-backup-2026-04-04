@@ -5,6 +5,7 @@ first, then mutate the typed tables. Edits should target a clone (see
 from datetime import datetime
 
 from . import validation as v
+from . import safety
 
 # Tables deep-copied by clone (all carry master_set_id). Order is irrelevant.
 CLONE_TABLES = [
@@ -88,12 +89,19 @@ def list_skill(conn, msid):
 def update_skill(conn, msid, tech_id, cells: dict):
     for loc, rank in cells.items():
         v.validate_skill_rank(rank)
+    warnings = []
     for loc, rank in cells.items():
+        old = conn.execute(
+            "SELECT rank FROM ms_skill_cell WHERE master_set_id=? AND tech_id=? AND loc_code=?",
+            (msid, tech_id, loc)).fetchone()
+        old_rank = old["rank"] if old else "-"
+        warnings += safety.night_eligibility_warnings(
+            conn, msid, tech_id=tech_id, loc_code=loc, old_rank=old_rank, new_rank=rank)
         conn.execute(
             "UPDATE ms_skill_cell SET rank=? WHERE master_set_id=? AND tech_id=? AND loc_code=?",
             (rank, msid, tech_id, loc))
     conn.commit()
-    return {"tech_id": tech_id, "updated": list(cells.keys())}
+    return {"tech_id": tech_id, "updated": list(cells.keys()), "warnings": warnings}
 
 
 # --- holiday_targets -------------------------------------------------------

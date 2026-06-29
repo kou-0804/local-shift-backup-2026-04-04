@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from webapp.api.db import get_db
 from . import crud
+from .safety import LOAD_BEARING_IDS, SafetyError, assert_load_bearing_ids
 from .validation import ValidationError
 
 router = APIRouter(prefix="/masters", tags=["masters"])
@@ -96,6 +97,22 @@ def upsert_holiday(master_set_id: int, payload: Dict[str, Any], conn=Depends(get
 @router.delete("/{master_set_id}/holiday_targets/{key}")
 def delete_holiday(master_set_id: int, key: str, conn=Depends(get_db)):
     return crud.delete_holiday_target(conn, master_set_id, key)
+
+
+# --- safety gate (load-bearing IDs) ----------------------------------------
+
+@router.get("/{master_set_id}/safety-check")
+def safety_check(master_set_id: int, conn=Depends(get_db)):
+    """Verify the §3.5 hardcoded staff IDs exist. {ok, missing}."""
+    try:
+        assert_load_bearing_ids(conn, master_set_id)
+        return {"ok": True, "missing": [], "load_bearing_ids": LOAD_BEARING_IDS}
+    except SafetyError as exc:
+        present = {r["tech_id"] for r in conn.execute(
+            "SELECT tech_id FROM ms_staff WHERE master_set_id=?", (master_set_id,))}
+        missing = [t for t in LOAD_BEARING_IDS if t not in present]
+        return {"ok": False, "missing": missing, "message": str(exc),
+                "load_bearing_ids": LOAD_BEARING_IDS}
 
 
 # --- read-only list for the remaining masters ------------------------------
