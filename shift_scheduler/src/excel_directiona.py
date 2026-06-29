@@ -186,8 +186,36 @@ def _build_summary_sheet(wb, grid):
 
 
 def _build_validation_sheet(wb, year, month, warnings):
-    return None
+    """検証レポートシート（live recompute_stats 由来の警告文字列を描画）。
+    §6.5: 警告色は本体グリッドには出さず、この専用シートだけで着色する。"""
+    warnings = warnings or []
+    ws = wb.create_sheet("検証レポート(自動診断)")
+    ws.cell(row=1, column=1,
+            value=f"{year}年{month}月 勤務表 検証レポート").font = Font(size=14, bold=True)
+    ws.merge_cells("A1:E1")
+
+    if not warnings:
+        ws.cell(row=3, column=1, value="状態: ✅ 正常").font = Font(color="0070C0", bold=True)
+        ws.cell(row=5, column=1,
+                value="すべての配置・スキル要件が正常に満たされています（問題なし）。")
+    else:
+        ws.cell(row=3, column=1,
+                value=f"状態: ⚠️ {len(warnings)}件の警告あり").font = Font(color="FF0000", bold=True)
+        ws.cell(row=5, column=1, value="【レポート詳細】").font = Font(bold=True)
+        r = 6
+        for w in warnings:
+            cell = ws.cell(row=r, column=1, value=f"- {w}")
+            if "不足" in w:
+                cell.font = Font(color="C00000")       # 濃い赤
+            elif "代替処理" in w:
+                cell.font = Font(color="E36C0A")       # オレンジ
+            r += 1
+    ws.column_dimensions["A"].width = 100
 
 
 def _apply_print_setup(ws, last_col):
-    return None
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A3
+    ws.print_title_rows = "1:3"
+    ws.print_title_cols = "A:B"
+    ws.print_area = f"A1:{get_column_letter(last_col)}{ws.max_row}"

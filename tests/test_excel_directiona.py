@@ -137,3 +137,28 @@ def test_summary_includes_per_location_columns():
     header = [c.value for c in ws[1]]
     for loc in ("病CT", "CT", "CLMR"):     # 各場所 from stats_columns
         assert loc in header
+
+
+def test_validation_sheet_renders_passed_warnings():
+    wb = openpyxl.load_workbook(BytesIO(render_directiona(
+        _sample_grid(), warnings=["6月3日: [CT] の配置人数が不足しています (目標: 2人 / 実際: 1人)"])))
+    assert "検証レポート" in wb.sheetnames[-1] or "検証レポート(自動診断)" in wb.sheetnames
+    ws = wb["検証レポート(自動診断)"]
+    blob = "\n".join(str(c.value) for col in ws.iter_cols() for c in col if c.value)
+    assert "[CT] の配置人数が不足" in blob
+
+
+def test_validation_sheet_clean_when_no_warnings():
+    wb = openpyxl.load_workbook(BytesIO(render_directiona(_sample_grid(), warnings=[])))
+    ws = wb["検証レポート(自動診断)"]
+    blob = "\n".join(str(c.value) for col in ws.iter_cols() for c in col if c.value)
+    assert "問題" in blob or "OK" in blob or "なし" in blob   # clean status line
+
+
+def test_main_sheet_print_setup_a3_landscape():
+    ws = _load().worksheets[0]
+    assert ws.page_setup.orientation == "landscape"
+    assert str(ws.page_setup.paperSize) == str(ws.PAPERSIZE_A3)   # 8
+    # openpyxl normalizes print titles to absolute refs ($1:$3 / $A:$B); strip the $.
+    assert ws.print_title_rows.replace("$", "") == "1:3"          # header rows repeat
+    assert ws.print_title_cols.replace("$", "") == "A:B"          # name cols repeat
