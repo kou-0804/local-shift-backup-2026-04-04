@@ -1,0 +1,56 @@
+.grid-scroll {
+  overflow: auto;
+  max-height: 80vh;
+  position: relative;
+}
+.schedule-grid {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.schedule-grid th,
+.schedule-grid td {
+  border: 1px solid #ccc;
+  min-width: 28px;
+  text-align: center;
+  padding: 1px 2px;
+}
+.sticky-name {
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 2;
+  min-width: 64px;
+}
+.schedule-grid thead th {
+  position: sticky;
+  top: 0;
+  background: #4472c4;
+  color: #fff;
+  z-index: 3;
+}
+.schedule-grid thead th.sticky-name {
+  z-index: 4;
+}
+.col-sat {
+  background: #e3f2fd;
+  color: #000;
+}
+.col-sun {
+  background: #ffebee;
+  color: #000;
+}
+.day-cell {
+  cursor: pointer;
+}
+.stat-cell,
+.stat-head {
+  background: #fafafa;
+}
+.lock-badge {
+  font-size: 9px;
+  margin-right: 1px;
+}
+.oncall-row td {
+  background: #f5f5f5;
+  font-weight: 600;
+}
