@@ -6,7 +6,7 @@ from pydantic import BaseModel, conint
 
 from webapp.api.config import settings
 from webapp.api.db import get_db
-from webapp.api.jobs import JobStore, run_job
+from webapp.api.jobs import JobStore, run_job_materialized
 from webapp.api import rosters as roster_ops
 from shift_scheduler.src.excel_directiona import render_directiona
 from main import run_schedule
@@ -29,7 +29,9 @@ def health():
 @app.post("/jobs", status_code=201)
 def create_job(req: JobRequest, background: BackgroundTasks):
     job = store.create(req.year, req.month)
-    background.add_task(run_job, store, job.id, RUNNER, settings.data_dir)
+    # P3: generation runs against a temp data_dir materialized from the default
+    # master_set (falls back to settings.data_dir when no master_set is seeded).
+    background.add_task(run_job_materialized, store, job.id, RUNNER)
     return {"id": job.id, "status": job.status}
 
 
