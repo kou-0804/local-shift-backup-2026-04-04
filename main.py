@@ -1276,6 +1276,7 @@ def run_schedule(year: int, month: int, data_dir: str = "shift_scheduler/data",
         daikyu_counts=daikyu_counts, off_counts=off_counts,
         validation_errors=validation_errors,
         workbook_bytes=workbook_bytes,
+        daily_location_needs=daily_location_needs,
     )
 
 

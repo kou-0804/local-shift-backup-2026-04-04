@@ -25,3 +25,13 @@ def test_as_dict_excludes_bytes_and_is_deterministic():
     # integer day keys are stringified for stable JSON round-tripping
     assert set(d["requests"].keys()) == {"1"}
     assert d["year"] == 2026 and d["month"] == 6
+
+
+def test_daily_location_needs_field_default_and_excluded_from_as_dict():
+    r = ScheduleResult(
+        year=2026, month=6, staff=[], day_assignments={}, night_assignments={},
+        requests={}, on_call_assignments={}, daikyu_counts={}, off_counts={},
+        validation_errors=[],
+    )
+    assert r.daily_location_needs == {}              # default
+    assert "daily_location_needs" not in r.as_dict()  # excluded from parity dict

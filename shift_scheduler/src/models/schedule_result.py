@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 
@@ -16,6 +16,7 @@ class ScheduleResult:
     off_counts: Dict[str, int]
     validation_errors: List[str]
     workbook_bytes: bytes = b""
+    daily_location_needs: dict = field(default_factory=dict)  # {date or day: {loc_code: required}}
 
     def as_dict(self) -> dict:
         """決定的・JSON 化可能な辞書（workbook_bytes は除外、リストはソート）。"""
