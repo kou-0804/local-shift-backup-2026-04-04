@@ -232,75 +232,18 @@ class ExcelGenerator:
                 row += 1
 
     def _get_assignment_text(self, tech_id: str, day: int) -> str:
-        """配置テキストを取得"""
-        parts = []
-        
-        # 日勤配置
-        if day in self.day_assignments:
-            for loc_code, tech_ids in self.day_assignments[day].items():
-                if tech_id in tech_ids:
-                    parts.append(loc_code)
-        
-        # 夜勤
-        if day in self.night_assignments:
-            if tech_id in self.night_assignments[day]:
-                if parts:
-                    parts[0] += '夜'
-                else:
-                    parts.append('夜')
-        
-        # 明け
-        if day > 1 and (day - 1) in self.night_assignments:
-            if tech_id in self.night_assignments[day - 1]:
-                return '○'
-        
-        # Visualizing Requests (User Requirement)
-        req_symbol = ""
-        if day in self.requests and tech_id in self.requests[day]:
-             req_symbol = self.requests[day][tech_id]
-             
-        # If Night Request matches Assignment, append (希)
-        if req_symbol == '夜希':
-             # Find the part with '夜' and mark it
-             for i, p in enumerate(parts):
-                  if '夜' in p:
-                      parts[i] = p + '(希)'
+        """配置テキストを取得（単一ソース: grid_derivation へ委譲）"""
+        from shift_scheduler.src.grid_derivation import derive_cell_text
+        return derive_cell_text(tech_id, day, self.day_assignments,
+                                self.night_assignments, self.requests, self.nuc_tx_ids)
 
-        # Fix: Ensure 17業/17休 is reflected
-        if req_symbol in ['17業', '17休']:
-            # append to list effectively
-            parts.append(req_symbol)
-        
-        # 割り当てがない場合、申請を表示
-        if not parts:
-            if req_symbol and req_symbol != '休(仮)':
-                return req_symbol
-        
-        # 核医学・治療のスタッフで、システムが付けた「休」を非表示にする
-        # （夜勤・明け・申請休みがある場合はそちらが優先されるため、ここでは純粋な「休」を空欄化する）
-        if tech_id in self.nuc_tx_ids and parts == ['休']:
-            # 申請が休み系（◆, ☆, 17休など）でない場合は、空欄にする
-            if not req_symbol or req_symbol in ['', '夜希', '休(仮)']:
-                return ''
-
-        # 「休」が割り当てられていても、予定申請があればそちらを優先表示
-        if parts == ['休'] and req_symbol and req_symbol not in ['', '夜希', '休(仮)']:
-            return req_symbol
-        
-        return '/'.join(parts) if parts else ''
-    
     def _get_cell_fill(self, tech_id: str, day: int, cell_value: str) -> PatternFill:
-        """セルの背景色を取得"""
-        if '夜' in cell_value:
-            return PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
-        if cell_value == '○':
-            return PatternFill(start_color='FFC0CB', end_color='FFC0CB', fill_type='solid')
-        if cell_value in ['★', '☆', '◆']:
-            return PatternFill(start_color='FFCDD2', end_color='FFCDD2', fill_type='solid')
-        if cell_value == '休':
-            # Enforced Holiday (Grey)
-            return PatternFill(start_color='D3D3D3', end_color='D3D3D3', fill_type='solid')
-        return None
+        """セルの背景色を取得（単一ソース: grid_derivation.cell_fill の16進色を PatternFill へ）"""
+        from shift_scheduler.src.grid_derivation import cell_fill
+        hex_color = cell_fill(cell_value)
+        if hex_color is None:
+            return None
+        return PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
 
     def _apply_formatting(self):
         """書式設定"""
