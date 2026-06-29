@@ -156,6 +156,149 @@ def list_generic(conn, msid, master):
                  (msid,))
 
 
+# --- master-set listing ----------------------------------------------------
+
+def list_master_sets(conn):
+    return [{"master_set_id": r["id"], "name": r["name"],
+             "created_at": r["created_at"], "parent_set_id": r["parent_set_id"]}
+            for r in conn.execute(
+                "SELECT id,name,created_at,parent_set_id FROM master_set ORDER BY id")]
+
+
+# --- write endpoints (P3a-2): replace-all per master -----------------------
+# Each rebuilds row_order from list position so materialize (ORDER BY row_order)
+# reproduces CSV line order. Validation runs BEFORE any mutation -> a 422 leaves
+# the set untouched. Edits should target a clone (clone_master_set).
+
+def replace_location_set(conn, msid, locations, power_balance):
+    """ATOMIC 2-table replace (勤務場所マスタ is one CSV with sections A+B)."""
+    loc_codes = set()
+    for r in locations:
+        v.validate_location_row(r)
+        loc_codes.add(r.get("loc_code"))
+    for r in power_balance:
+        v.validate_pb_location_ref(r.get("loc_code"), loc_codes)
+    try:
+        conn.execute("DELETE FROM ms_location WHERE master_set_id=?", (msid,))
+        conn.execute("DELETE FROM ms_power_balance WHERE master_set_id=?", (msid,))
+        for i, r in enumerate(locations):
+            conn.execute(
+                "INSERT INTO ms_location(master_set_id,row_order,loc_code,loc_name,"
+                "category,mon,tue,wed,thu,fri,sat,sun,gender_constraint,display_order,"
+                "active) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (msid, i, r.get("loc_code"), r.get("loc_name"), r.get("category"),
+                 r.get("mon"), r.get("tue"), r.get("wed"), r.get("thu"), r.get("fri"),
+                 r.get("sat"), r.get("sun"), r.get("gender_constraint"),
+                 r.get("display_order"), r.get("active")))
+        for i, r in enumerate(power_balance):
+            conn.execute(
+                "INSERT INTO ms_power_balance(master_set_id,row_order,loc_code,min_rank,"
+                "min_count,cd_cap,d_solo_ban) VALUES(?,?,?,?,?,?,?)",
+                (msid, i, r.get("loc_code"), r.get("min_rank"), r.get("min_count"),
+                 r.get("cd_cap"), r.get("d_solo_ban")))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"locations": len(locations), "power_balance": len(power_balance)}
+
+
+def replace_special_rules(conn, msid, rows):
+    warnings = []
+    for r in rows:
+        v.validate_rule_id(r.get("rule_id"))
+        v.validate_special_rule_row(r)
+        warnings += safety.special_rule_warnings(r.get("rank_cond"))
+    conn.execute("DELETE FROM ms_special_rule WHERE master_set_id=?", (msid,))
+    for i, r in enumerate(rows):
+        conn.execute(
+            "INSERT INTO ms_special_rule(master_set_id,row_order,rule_id,loc_code,"
+            "weekday,week,required_count,rank_cond,rank_count,source_loc,source_rank,note)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (msid, i, r.get("rule_id"), r.get("loc_code"), r.get("weekday"),
+             r.get("week"), r.get("required_count"), r.get("rank_cond"),
+             r.get("rank_count"), r.get("source_loc"), r.get("source_rank"),
+             r.get("note")))
+    conn.commit()
+    return {"count": len(rows), "warnings": warnings}
+
+
+def _split_names(text):
+    return [n.strip() for n in (text or "").replace("，", ",").split(",") if n.strip()]
+
+
+def _resolve_ids(names, name_to_id):
+    """Substring match mirroring import_dir (full/half-width space tolerant)."""
+    out = []
+    for n in names:
+        clean = n.replace(" ", "").replace("　", "")
+        for nm, tid in name_to_id.items():
+            nmc = nm.replace("　", "").replace(" ", "")
+            if clean and (clean in nmc or nmc in clean):
+                out.append(tid)
+                break
+    return out
+
+
+def replace_training(conn, msid, rows):
+    name_to_id = {r["name"]: r["tech_id"] for r in conn.execute(
+        "SELECT name,tech_id FROM ms_staff WHERE master_set_id=?", (msid,))}
+    staff_names = set(name_to_id)
+    # Collect every name that must resolve (instructor names skipped when the row
+    # uses the ランクA保持者 sentinel). Validate once -> 422 lists all unresolved.
+    to_check = []
+    for r in rows:
+        instr = r.get("instructor_text") or ""
+        if "ランクA保持者" not in instr:
+            to_check += _split_names(instr)
+        to_check += _split_names(r.get("trainee_text"))
+    import json as _json
+    v.validate_training_names(to_check, staff_names)
+    conn.execute("DELETE FROM ms_training WHERE master_set_id=?", (msid,))
+    for i, r in enumerate(rows):
+        instr = r.get("instructor_text") or ""
+        rank_a_only = "ランクA保持者" in instr
+        instr_ids = [] if rank_a_only else _resolve_ids(_split_names(instr), name_to_id)
+        trainee_ids = _resolve_ids(_split_names(r.get("trainee_text")), name_to_id)
+        conn.execute(
+            "INSERT INTO ms_training(master_set_id,row_order,modality,instructor_text,"
+            "trainee_text,display_name,instructor_ids_json,trainee_ids_json,rank_a_only)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (msid, i, r.get("modality"), instr, r.get("trainee_text"),
+             r.get("display_name"), _json.dumps(instr_ids), _json.dumps(trainee_ids),
+             int(rank_a_only)))
+    conn.commit()
+    return {"count": len(rows)}
+
+
+def replace_night_quota(conn, msid, year_month, rows):
+    for r in rows:
+        v.validate_quota_count(r.get("count"))
+    conn.execute("DELETE FROM ms_night_quota WHERE master_set_id=?", (msid,))
+    for i, r in enumerate(rows):
+        conn.execute(
+            "INSERT INTO ms_night_quota(master_set_id,row_order,year_month,tech_id,name,"
+            "count) VALUES(?,?,?,?,?,?)",
+            (msid, i, year_month, r.get("tech_id"), r.get("name"), int(r.get("count"))))
+    conn.commit()
+    return {"count": len(rows), "year_month": year_month}
+
+
+def replace_night_overrides(conn, msid, rows):
+    for r in rows:
+        for fld in ("night_mr", "night_cath", "night_angio"):
+            v.validate_night_override_state(r.get(fld), fld)
+    conn.execute("DELETE FROM ms_night_override WHERE master_set_id=?", (msid,))
+    for i, r in enumerate(rows):
+        conn.execute(
+            "INSERT INTO ms_night_override(master_set_id,row_order,sname,tech_id,"
+            "night_mr,night_cath,night_angio,qual_code) VALUES(?,?,?,?,?,?,?,?)",
+            (msid, i, r.get("sname"), r.get("tech_id"), r.get("night_mr"),
+             r.get("night_cath"), r.get("night_angio"), r.get("qual_code")))
+    conn.commit()
+    return {"count": len(rows)}
+
+
 # --- clone -----------------------------------------------------------------
 
 def clone_master_set(conn, src_id, created_by="", name=None):

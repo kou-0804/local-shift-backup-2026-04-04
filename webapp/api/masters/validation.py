@@ -121,3 +121,47 @@ def validate_special_rule_row(row: dict):
             int(rc)
         except (TypeError, ValueError):
             raise ValidationError("必要人数は整数が必要です", "required_count")
+
+
+# --- P3a-2 write-endpoint validators (additive) ----------------------------
+
+NIGHT_TRISTATE = {"TRUE", "FALSE", ""}  # "" == inherit (derive from skill rank)
+_WEEKDAY_FIELDS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def validate_rule_id(rule_id: str):
+    if not str(rule_id or "").startswith("SR-"):
+        raise ValidationError(
+            f"ルールIDは SR- で始まる必要があります: {rule_id!r}", "rule_id")
+
+
+def validate_location_row(row: dict):
+    """勤務場所マスタ セクションA 行: 有効 ∈ {○,×}, 曜日人数は0以上の整数。"""
+    if row.get("active") not in MARKS:
+        raise ValidationError(
+            f"有効は ○ または × が必要です: {row.get('active')!r}", "active")
+    for f in _WEEKDAY_FIELDS:
+        val = row.get(f)
+        try:
+            ival = int(val)
+        except (TypeError, ValueError):
+            raise ValidationError(f"曜日人数（{f}）は0以上の整数が必要です: {val!r}", f)
+        if ival < 0:
+            raise ValidationError(f"曜日人数（{f}）は0以上の整数が必要です: {val!r}", f)
+
+
+def validate_night_override_state(value: str, field: str = "state"):
+    if (value or "") not in NIGHT_TRISTATE:
+        raise ValidationError(
+            f"夜勤上書きは TRUE / FALSE / 空欄(継承) のいずれか: {value!r}", field)
+
+
+def validate_quota_count(count):
+    if isinstance(count, bool):
+        raise ValidationError("夜勤回数は0以上の整数が必要です", "count")
+    try:
+        ival = int(count)
+    except (TypeError, ValueError):
+        raise ValidationError("夜勤回数は0以上の整数が必要です", "count")
+    if ival < 0:
+        raise ValidationError("夜勤回数は0以上の整数が必要です", "count")

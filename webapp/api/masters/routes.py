@@ -1,7 +1,7 @@
 """FastAPI router for master management: per-master CRUD + clone + (Task 6)
 safety-check + (Task 7) 予定申請 import. Included from ``webapp/api/main.py``.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -12,6 +12,15 @@ from .safety import LOAD_BEARING_IDS, SafetyError, assert_load_bearing_ids
 from .validation import ValidationError
 
 router = APIRouter(prefix="/masters", tags=["masters"])
+# Separate (unprefixed) router so the collection lives at /master-sets, not
+# /masters/...; included alongside `router` in webapp/api/main.py.
+sets_router = APIRouter(tags=["masters"])
+
+
+@sets_router.get("/master-sets")
+def list_master_sets(conn=Depends(get_db)):
+    """[{master_set_id, name, created_at, parent_set_id}] for every master_set."""
+    return crud.list_master_sets(conn)
 
 
 def _name_to_id(conn, master_set_id: Optional[int]) -> dict:
@@ -147,6 +156,58 @@ def safety_check(master_set_id: int, conn=Depends(get_db)):
         missing = [t for t in LOAD_BEARING_IDS if t not in present]
         return {"ok": False, "missing": missing, "message": str(exc),
                 "load_bearing_ids": LOAD_BEARING_IDS}
+
+
+# --- write endpoints (P3a-2): replace-style PUTs ---------------------------
+# Clone-before-edit applies (POST /masters/{id}/clone). Each replaces the whole
+# master atomically; ValidationError -> 422 {field, message}, set untouched.
+
+@router.put("/{master_set_id}/location_set")
+def put_location_set(master_set_id: int, payload: Dict[str, Any],
+                     conn=Depends(get_db)):
+    """ATOMIC: body {locations:[...], power_balance:[...]} replaces BOTH tables."""
+    try:
+        return crud.replace_location_set(
+            conn, master_set_id, payload.get("locations") or [],
+            payload.get("power_balance") or [])
+    except ValidationError as exc:
+        _422(exc)
+
+
+@router.put("/{master_set_id}/special_rules")
+def put_special_rules(master_set_id: int, rows: List[Dict[str, Any]],
+                      conn=Depends(get_db)):
+    try:
+        return crud.replace_special_rules(conn, master_set_id, rows)
+    except ValidationError as exc:
+        _422(exc)
+
+
+@router.put("/{master_set_id}/training")
+def put_training(master_set_id: int, rows: List[Dict[str, Any]],
+                 conn=Depends(get_db)):
+    try:
+        return crud.replace_training(conn, master_set_id, rows)
+    except ValidationError as exc:
+        _422(exc)
+
+
+@router.put("/{master_set_id}/night_quota")
+def put_night_quota(master_set_id: int, rows: List[Dict[str, Any]],
+                    year_month: str = Query(...), conn=Depends(get_db)):
+    try:
+        return crud.replace_night_quota(conn, master_set_id, year_month, rows)
+    except ValidationError as exc:
+        _422(exc)
+
+
+@router.put("/{master_set_id}/night_overrides")
+def put_night_overrides(master_set_id: int, rows: List[Dict[str, Any]],
+                        conn=Depends(get_db)):
+    try:
+        return crud.replace_night_overrides(conn, master_set_id, rows)
+    except ValidationError as exc:
+        _422(exc)
 
 
 # --- read-only list for the remaining masters ------------------------------
