@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from shift_scheduler.src.grid_derivation import build_grid
 from shift_scheduler.src.stats_engine import recompute_stats, _is_public_off
+from shift_scheduler.src.lock_utils import day_locks_from_rows, validate_lock_set
 
 
 def _month_holidays(year, month):
@@ -429,3 +430,123 @@ def undo(conn, rid, payload):
 
 def redo(conn, rid, payload):
     return _undo_redo(conn, rid, payload, redo=True)
+
+
+# --- P2b: partial-lock re-solve (resolve_roster + synthetic op='resolve' edit) ---
+
+
+class LockConflictError(Exception):
+    """Raised when a lock set is structurally impossible (pre-validate) or collides
+    with a hard constraint (solver assumption-infeasibility). Surfaced as HTTP 422."""
+
+    def __init__(self, conflicts):
+        self.conflicts = conflicts
+
+
+def _all_day_rows_snapshot(conn, rid):
+    """Full roster_assignments rows (all kinds) in the column shape _restore_rows
+    consumes — the before/after snapshot for the undoable resolve edit."""
+    return [dict(r) for r in conn.execute(
+        "SELECT staff_id,date,kind,location_or_role,symbol,locked "
+        "FROM roster_assignments WHERE roster_id=?", (rid,))]
+
+
+def _resolve_rows_from_result(result):
+    """Mirror freeze_roster's row build (day/night/oncall/request), locked=0.
+    Yields (staff_id, iso_date, kind, location_or_role, symbol, locked)."""
+    y, m = result.year, result.month
+    rows = []
+    for d, locs in result.day_assignments.items():
+        for loc, ids in locs.items():
+            for sid in ids:
+                rows.append((sid, _iso(y, m, int(d)), "day", loc, None, 0))
+    for d, ids in result.night_assignments.items():
+        for sid in ids:
+            rows.append((sid, _iso(y, m, int(d)), "night", "夜", None, 0))
+    for d, sm in result.requests.items():
+        for sid, sym in sm.items():
+            rows.append((sid, _iso(y, m, int(d)), "request", None, sym, 0))
+    for d, roles in (result.on_call_assignments or {}).items():
+        for role, sid in roles.items():
+            rows.append((sid, _iso(y, m, int(d)), "oncall", role, None, 0))
+    return rows
+
+
+def resolve_roster(conn, rid, *, runner, user_id=None) -> dict:
+    """Re-run the solver holding locked=1 day cells fixed, then re-freeze and record
+    a synthetic undoable op='resolve' edit. Serialised via jobs._solve_lock (protects
+    CP-SAT determinism, seed=42/num_workers=1). 404 (KeyError) if missing; raises
+    LockConflictError (-> 422) on structural-impossible or hard-conflict lock sets."""
+    hdr = conn.execute(
+        "SELECT year,month,data_dir,target_holidays,version,edit_cursor "
+        "FROM rosters WHERE id=?", (rid,)).fetchone()
+    if hdr is None:
+        raise KeyError(rid)
+    year, month = hdr["year"], hdr["month"]
+
+    locked_rows = [dict(r) for r in conn.execute(
+        "SELECT staff_id,date,kind,location_or_role,locked FROM roster_assignments "
+        "WHERE roster_id=? AND kind='day' AND locked=1", (rid,))]
+    la = day_locks_from_rows(locked_rows)
+
+    # (1) Pre-validate (fast, pure) -> 422 before any solve.
+    d_dicts = roster_to_dicts(conn, rid)
+    errs = validate_lock_set(la, daily_location_needs=d_dicts["daily_location_needs"])
+    if errs:
+        raise LockConflictError({"stage": "pre_validate", "errors": errs})
+
+    before = _all_day_rows_snapshot(conn, rid)
+
+    # (2) Re-solve serialised.
+    from webapp.api.jobs import _solve_lock
+    with _solve_lock:
+        result = runner(year, month, hdr["data_dir"], locked_assignments=la)
+
+    # (3) Hard-constraint collision -> 422 with the exact offending cells.
+    conflicts = getattr(result, "lock_conflicts", []) or []
+    if conflicts:
+        raise LockConflictError({"stage": "solve", "conflicts": conflicts})
+
+    # (4) Re-freeze: keep locked day rows verbatim; delete + replace all unlocked rows.
+    locked_keys = {(r["staff_id"], r["date"]) for r in locked_rows}
+    conn.execute(
+        "DELETE FROM roster_assignments WHERE roster_id=? AND NOT (kind='day' AND locked=1)",
+        (rid,))
+    for sid, iso, kind, lor, sym, lk in _resolve_rows_from_result(result):
+        if kind == "day" and (sid, iso) in locked_keys:
+            continue  # keep the locked version verbatim
+        conn.execute(
+            "INSERT OR IGNORE INTO roster_assignments(roster_id,staff_id,date,kind,"
+            "location_or_role,symbol,locked) VALUES(?,?,?,?,?,?,?)",
+            (rid, sid, iso, kind, lor, sym, lk))
+
+    after = _all_day_rows_snapshot(conn, rid)
+
+    # (5) Synthetic undoable op='resolve' edit (full-row before/after snapshots, so a
+    # single undo restores the complete pre-resolve grid via _restore_rows).
+    cursor = hdr["edit_cursor"]
+    conn.execute("DELETE FROM roster_edits WHERE roster_id=? AND seq>?", (rid, cursor))
+    seq = cursor + 1
+    payload = {"locked": sorted([list(k) for k in locked_keys])}
+    conn.execute(
+        "INSERT INTO roster_edits(roster_id,seq,user_id,at,op,payload_json,"
+        "before_json,after_json) VALUES(?,?,?,?,?,?,?,?)",
+        (rid, seq, user_id, _now(), "resolve",
+         json.dumps(payload, ensure_ascii=False),
+         json.dumps(before, ensure_ascii=False),
+         json.dumps(after, ensure_ascii=False)))
+    new_version = hdr["version"] + 1
+    conn.execute("UPDATE rosters SET version=?, edit_cursor=? WHERE id=?",
+                 (new_version, seq, rid))
+
+    # (6) Recompute stats + grid, commit, return.
+    affected_staff = {r["staff_id"] for r in before + after}
+    warnings, _, _ = _recompute_and_persist(conn, rid, affected_staff)
+    grid, _ = build_roster_grid(conn, rid)
+    conn.commit()
+    return {
+        "version": new_version,
+        "grid": grid,
+        "warnings": _warnings_payload(warnings),
+        "unlockable": getattr(result, "unlockable_locks", []),
+    }

@@ -137,6 +137,19 @@ def post_redo(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
         raise HTTPException(status_code=409, detail=exc.grid)
 
 
+@app.post("/rosters/{rid}/resolve")
+def post_resolve(rid: int, conn=Depends(get_db)):
+    """P2b partial-lock re-solve: re-run the solver holding locked=1 day cells fixed,
+    re-freeze (keep locked / replace unlocked), record an undoable op='resolve' edit.
+    Returns {version, grid, warnings, unlockable}. 422 with the offending cells when
+    the lock set is structurally impossible or collides with a hard constraint."""
+    _roster_or_404(conn, rid)
+    try:
+        return roster_ops.resolve_roster(conn, rid, runner=RUNNER)
+    except roster_ops.LockConflictError as exc:
+        raise HTTPException(status_code=422, detail=exc.conflicts)
+
+
 def _format_warnings(rc: dict, month: int) -> list:
     """recompute_stats の構造化警告を検証シート用の日本語文字列へ整形。
     実際の recompute_stats キー（coverage / night_hb_gaps）に合わせる。"""

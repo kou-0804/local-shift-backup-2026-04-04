@@ -17,6 +17,11 @@ class ScheduleResult:
     validation_errors: List[str]
     workbook_bytes: bytes = b""
     daily_location_needs: dict = field(default_factory=dict)  # {date or day: {loc_code: required}}
+    # P2b partial-lock re-solve: surfaced off the object directly (NEVER in as_dict()
+    # — they must stay excluded like daily_location_needs/workbook_bytes so the parity
+    # golden gate is unaffected and an empty lock set leaks nothing).
+    unlockable_locks: list = field(default_factory=list)  # forces with no var (reported)
+    lock_conflicts: list = field(default_factory=list)    # assumption-infeasibility cells
 
     def as_dict(self) -> dict:
         """決定的・JSON 化可能な辞書（workbook_bytes は除外、リストはソート）。"""

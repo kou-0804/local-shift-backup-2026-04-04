@@ -24,7 +24,7 @@ class NightScheduler:
         num_days = calendar.monthrange(self.year, self.month)[1]
         return [date(self.year, self.month, d) for d in range(1, num_days + 1)]
 
-    def schedule(self, requests: List[Request], night_quotas: Dict[str, int], previous_month_assignments: List[NightAssignment] = []) -> List[NightAssignment]:
+    def schedule(self, requests: List[Request], night_quotas: Dict[str, int], previous_month_assignments: List[NightAssignment] = [], locked_assignments: dict | None = None) -> List[NightAssignment]:
         model = cp_model.CpModel()
         num_days = len(self.dates)
         
@@ -61,7 +61,23 @@ class NightScheduler:
         
         # 3. Soft Constraints
         self._add_soft_constraints(model, x, night_quotas, prev_map, penalties)
-        
+
+        # --- P2b partial-lock re-solve injection (night = occupancy; '夜'-domain only) ---
+        # Night role (MR/アンギオ/心カテ) is derived by post-solve permutation and so
+        # CANNOT be forced — only occupancy (sid, date) is. Day-domain entries have
+        # lc != '夜' and are skipped here (they never leak into the night model).
+        # DETERMINISM CONTRACT: an empty lock set adds ZERO assumptions => unchanged.
+        from shift_scheduler.src.lock_utils import NIGHT_LOC
+        _locks = locked_assignments or {}
+        for d in self.dates:
+            dl = _locks.get(d, {})
+            for sid, lc in dl.get('force', ()):
+                if lc == NIGHT_LOC and (sid, d) in x:
+                    model.AddAssumption(x[sid, d])
+            for sid, lc in dl.get('forbid', ()):
+                if lc == NIGHT_LOC and (sid, d) in x:
+                    model.AddAssumption(x[sid, d].Not())
+
         # 4. Solve
 
         solver = cp_model.CpSolver()

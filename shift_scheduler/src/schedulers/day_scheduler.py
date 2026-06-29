@@ -15,7 +15,8 @@ class DayScheduler:
     def __init__(self, staff_list: List[Staff], locations: List[Location], rules: List[SpecialRule],
                  skills: Dict[str, Dict[str, SkillRank]], pb_rules: List[PowerBalance],
                  year: int, month: int, training_rules: List[Dict] = None,
-                 disable_training: bool = False, target_holidays: int = 9):
+                 disable_training: bool = False, target_holidays: int = 9,
+                 locked_assignments: dict | None = None):
         self.staff_list = staff_list
         self.locations = locations
         self.rules = rules
@@ -26,6 +27,11 @@ class DayScheduler:
         self.target_holidays = target_holidays
         self.year = year
         self.month = month
+        # P2b partial-lock re-solve. Empty/None => ZERO assumption calls in
+        # _schedule_one_day => byte-identical to today (determinism contract).
+        self.locked_assignments = locked_assignments or {}
+        self.unlockable_locks = []   # forces with no BoolVar that day (reported)
+        self.lock_conflicts = []     # assumption-infeasibility offending cells
         self.dates = self._generate_dates()
         
         # Pre-calc MRI-only staff
@@ -1224,7 +1230,42 @@ class DayScheduler:
         total_penalties.extend(consecutive_penalties)
         total_penalties.extend(ultra_late_next_day_penalties)
         total_penalties.extend(deficit_vars)
-        
+
+        # --- P2b partial-lock re-solve injection (assumptions: enforce + diagnose) ---
+        # Each lock is an AddAssumption literal: when feasible it acts as a hard
+        # constraint; on INFEASIBLE solver.SufficientAssumptionsForInfeasibility()
+        # returns exactly the conflicting literals (mapped back below, after Solve).
+        # DETERMINISM CONTRACT: an empty lock set runs ZERO loop bodies => ZERO
+        # AddAssumption calls => model/presolve/search/solution unchanged => byte-identical.
+        locks = (self.locked_assignments or {}).get(current_date, {})
+        lit_map = {}  # literal index -> (sid, loc, iso_date, mode)
+        for sid, lc in locks.get('force', ()):
+            if lc == '夜':
+                continue  # night-domain entry; the day model ignores it
+            if lc in ('休', '○'):
+                vars_s = [x[sid, l.code] for l in target_locations if (sid, l.code) in x]
+                if vars_s:
+                    aux = model.NewBoolVar(f'offlock_{sid}_{current_date.isoformat()}')
+                    model.Add(sum(vars_s) == 0).OnlyEnforceIf(aux)
+                    model.AddAssumption(aux)
+                    lit_map[aux.Index()] = (sid, lc, current_date.isoformat(), 'force_off')
+                # else: staff already has no work var that day -> already off (no-op)
+            elif (sid, lc) in x:
+                lit = x[sid, lc]
+                model.AddAssumption(lit)
+                lit_map[lit.Index()] = (sid, lc, current_date.isoformat(), 'force')
+            else:
+                self.unlockable_locks.append(
+                    {'staff_id': sid, 'location': lc,
+                     'date': current_date.isoformat(), 'reason': 'no_var'})
+        for sid, lc in locks.get('forbid', ()):
+            if lc == '夜':
+                continue
+            if (sid, lc) in x:
+                neg = x[sid, lc].Not()
+                model.AddAssumption(neg)
+                lit_map[neg.Index()] = (sid, lc, current_date.isoformat(), 'forbid')
+
         # Req 2: Maximize Assignments - Penalties
         model.Maximize(sum(maximization_objective) - sum(total_penalties))
 
@@ -1238,6 +1279,18 @@ class DayScheduler:
         solver.parameters.random_seed = 42      # 再現性確保
         solver.parameters.num_workers = 1       # シングルスレッド（完全再現性）
         status = solver.Solve(model)
+
+        # --- P2b: assumption-based infeasibility diagnostics (Task 7) ---
+        # A lock that collides with a genuinely hard constraint surfaces here as the
+        # exact offending cells, rather than silently degrading the day to
+        # forced_holidays-only. Empty lock set => lit_map is {} => this is skipped.
+        if status == cp_model.INFEASIBLE and lit_map:
+            for idx in solver.SufficientAssumptionsForInfeasibility():
+                info = lit_map.get(idx)
+                if info:
+                    sid, loc, iso, mode = info
+                    self.lock_conflicts.append(
+                        {'staff_id': sid, 'location': loc, 'date': iso, 'mode': mode})
 
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
             result = self._extract_day_solution(solver, x, current_date, self.skills)

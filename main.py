@@ -14,6 +14,7 @@ from shift_scheduler.src.models.skill import SkillRank
 from datetime import date, timedelta
 from io import BytesIO
 from shift_scheduler.src.models.schedule_result import ScheduleResult
+from shift_scheduler.src.lock_utils import reassert_locks
 
 
 def assign_monthly_off_days(
@@ -24,6 +25,7 @@ def assign_monthly_off_days(
     year: int,
     month: int,
     target_holidays: int = 9,
+    locked_assignments: dict | None = None,
 ) -> Tuple[list, Dict[str, int], Dict[str, int]]:
     """出力済みシフト表に対してポスト処理：
     各スタッフに月間の指定された公休数（target_holidays）になるよう「休」を自動添加する。
@@ -182,7 +184,12 @@ def assign_monthly_off_days(
           f"({len(overridden_work)}件の研修割当を休に変更) - "
           f"{total_daikyu}名に計{total_daikyu_days}日の代休を付与", flush=True)
 
-    return list(filtered_result) + additional_holidays, daikyu_counts, off_counts
+    # P2b: defensive lock survival. reassert_locks is identity when the lock set is
+    # empty/None (determinism preserved); when non-empty it guarantees each locked
+    # (sid, date) keeps exactly its locked location even if blank->休 touched it.
+    final_list = list(filtered_result) + additional_holidays
+    final_list = reassert_locks(final_list, locked_assignments, year, month)
+    return final_list, daikyu_counts, off_counts
 
 
 def pre_seed_rest_days(technicians, requests, night_assignments, year: int, month: int,
@@ -510,7 +517,8 @@ def _coexistence_report(rest_map, target):
 
 
 def rebalance_workload(day_result_list, technicians, skills, locations, requests,
-                       night_assignments, year: int, month: int, target_holidays: int):
+                       night_assignments, year: int, month: int, target_holidays: int,
+                       locked_assignments: dict | None = None):
     """後段リバランサー: 過剰休(公休>目標)の人の空き平日に日勤を移し、代休(公休<目標)の人を
     休ませて、全員を目標公休に近づける。ハード制約(スキル/性別/連勤/個別ルール/パワーバランス簡易)を保つ。
 
@@ -527,6 +535,16 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
         night_map[(na.staff_id, na.date)] = True
     active = [s for s in technicians if s.status == '在籍']
     skill_of = lambda sid, l: skills.get(sid, {}).get(l, SkillRank.NONE)
+
+    # P2b: cells the greedy rebalancer must not touch. (sid, day_num) for every
+    # day-domain force. Empty set when no locks => guards below are inert (no
+    # behavioral change; determinism preserved). reassert_locks at return is the
+    # load-bearing guarantee.
+    pinned = set()
+    for _d, _locks in (locked_assignments or {}).items():
+        for _sid, _lc in _locks.get('force', set()):
+            if _lc != '夜':
+                pinned.add((_sid, _d.day))
 
     FORCED = {'業配', '業出', '出', '会議', '全会', '講', '勤', '出/講', '17業'}
     COND = {'研(聴)', '出/(発)', '出(発)', '発', '☆/(発)', '☆/(聴)', '研(発)', '出/(座)', '研(座)', '研(役)', '出/(役)'}
@@ -622,6 +640,8 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     break
                 if is_pub(d):
                     continue
+                if (U.id, d.day) in pinned:   # P2b: don't move U's locked cell
+                    continue
                 da = assign.get((U.id, d))
                 if not da or da.location_code in ('休', '○'):
                     continue
@@ -636,6 +656,8 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     continue
                 for O in overs:
                     if rest[O.id] <= target_holidays or O.id == U.id:
+                        continue
+                    if (O.id, d.day) in pinned:   # P2b: don't overwrite O's locked cell
                         continue
                     if is_protected(O.id, L) or not qualifies(O.id, L):
                         continue
@@ -689,6 +711,8 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     break
                 if is_pub(d):
                     continue
+                if (U.id, d.day) in pinned:   # P2b: don't move U's locked cell
+                    continue
                 da = assign.get((U.id, d))
                 if not da or da.location_code in ('休', '○'):
                     continue
@@ -702,6 +726,8 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                 for O in active:
                     # 交代後も O が target 以上を保つ＝新規代休を作らない（主ループより厳格）
                     if rest[O.id] < target_holidays + 1 or O.id == U.id:
+                        continue
+                    if (O.id, d.day) in pinned:   # P2b: don't overwrite O's locked cell
                         continue
                     if not _in_rotation(O, rest[O.id], num_days):
                         continue
@@ -748,11 +774,13 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
         for U in stuck:
             print(f"    ⚠️ 代休残存: {U.name}(公休{rest[U.id]}) — 有資格・空き平日・連勤・性別の"
                   f"いずれかが噛み合わず肩代わり不能", flush=True)
-    return day_result_list
+    # P2b: identity when no locks (determinism); else guarantee lock survival.
+    return reassert_locks(day_result_list, locked_assignments, year, month)
 
 
 def optimize_assignments_cpsat(day_result_list, technicians, skills, locations, requests,
-                               night_assignments, year: int, month: int, target_holidays: int):
+                               night_assignments, year: int, month: int, target_holidays: int,
+                               locked_assignments: dict | None = None):
     """月全体をCP-SATで再最適化（作り直し版・2026-06-14）。
     目的: ①ク6回(T013/T025)をハード床で修正 ②場所別担当回数の偏り(CT/ク)を公平化。
     既存の日次スロット(場所×必要数)は保ち「誰が埋めるか」だけを最適化する。
@@ -1025,6 +1053,23 @@ def optimize_assignments_cpsat(day_result_list, technicians, skills, locations, 
     for (sid, d, L), var in y.items():
         model.AddHint(var, 1 if cur.get((sid, d)) and cur[(sid, d)].location_code == L else 0)
 
+    # --- P2b: in-model lock pinning (optimization; reassert_locks is the guarantee) ---
+    # Empty/None lock set adds ZERO constraints => model unchanged => byte-identical.
+    # Plain model.Add is fine here (this model has its own accept/reject gate; we are
+    # not diagnosing it). If pinning makes it INFEASIBLE the run keeps the greedy
+    # result and reassert_locks restores the locked cell afterwards.
+    if locked_assignments:
+        for _d, _locks in locked_assignments.items():
+            for _sid, _lc in _locks.get('force', set()):
+                if _lc == '夜':
+                    continue
+                if _lc in ('休', '○'):
+                    for (s2, d2, L2), var in y.items():
+                        if s2 == _sid and d2 == _d:
+                            model.Add(var == 0)
+                elif (_sid, _d, _lc) in y:
+                    model.Add(y[(_sid, _d, _lc)] == 1)
+
     solver = cp_model.CpSolver()
     solver.parameters.max_deterministic_time = 120.0
     solver.parameters.max_time_in_seconds = 600
@@ -1036,7 +1081,7 @@ def optimize_assignments_cpsat(day_result_list, technicians, skills, locations, 
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         print("  (最適化解なし→貪欲リバランス結果を維持)", flush=True)
-        return day_result_list
+        return reassert_locks(day_result_list, locked_assignments, year, month)
 
     # ---- 反映: 「解からの再構築」（既存オブジェクト書換のバグを根治） ----
     # スロット構成員の元DayAssignmentを id() で識別して破棄し、solver採用者で新規生成。
@@ -1111,13 +1156,14 @@ def optimize_assignments_cpsat(day_result_list, technicians, skills, locations, 
     print(f"  📊 最適: 代休{out_dk:.1f} ク{out_ku} 幅CT{out_sp['CT']}/ク{out_sp['ク']}", flush=True)
     if worse:
         print("  ⛔ 悪化検知 → 最適化を不採用（greedy結果を維持）", flush=True)
-        return day_result_list
+        return reassert_locks(day_result_list, locked_assignments, year, month)
     print("  ✅ 改善/同等 → 最適化を採用", flush=True)
-    return new_list
+    return reassert_locks(new_list, locked_assignments, year, month)
 
 
 def run_schedule(year: int, month: int, data_dir: str = "shift_scheduler/data",
-                 output_dir: str | None = None, *, target_holidays: int | None = None) -> ScheduleResult:
+                 output_dir: str | None = None, *, target_holidays: int | None = None,
+                 locked_assignments: dict | None = None) -> ScheduleResult:
     """勤務表を生成して構造化結果を返す（CLI/Web 共通の呼び出し口）。
 
     output_dir を指定すると現行レイアウトの .xlsx も書き出す（CLI 用）。
@@ -1150,7 +1196,8 @@ def run_schedule(year: int, month: int, data_dir: str = "shift_scheduler/data",
         if prev_month_limit <= r.date < start_date and '夜' in r.symbol
     ]
     night_scheduler = NightScheduler(staff_list=technicians, year=year, month=month)
-    night_result = night_scheduler.schedule(requests, night_counts, prev_night_history)
+    night_result = night_scheduler.schedule(requests, night_counts, prev_night_history,
+                                            locked_assignments=locked_assignments)
 
     night_assignments_dict = {}
     for na in night_result:
@@ -1170,21 +1217,25 @@ def run_schedule(year: int, month: int, data_dir: str = "shift_scheduler/data",
         staff_list=technicians, skills=skills, locations=locations, pb_rules=pb_rules,
         rules=special_rules, training_rules=training_rules, year=year, month=month,
         disable_training=True, target_holidays=target_holidays,
+        locked_assignments=locked_assignments,
     )
     day_result_list, daily_location_needs = day_scheduler.schedule(requests_with_preseed, full_night_assignments)
     day_result_list = rebalance_workload(
         day_result_list=day_result_list, technicians=technicians, skills=skills, locations=locations,
         requests=requests_with_preseed, night_assignments=full_night_assignments,
         year=year, month=month, target_holidays=target_holidays,
+        locked_assignments=locked_assignments,
     )
     day_result_list = optimize_assignments_cpsat(
         day_result_list=day_result_list, technicians=technicians, skills=skills, locations=locations,
         requests=requests_with_preseed, night_assignments=full_night_assignments,
         year=year, month=month, target_holidays=target_holidays,
+        locked_assignments=locked_assignments,
     )
     day_result_list, daikyu_counts, off_counts = assign_monthly_off_days(
         technicians=technicians, day_result_list=day_result_list, night_assignments=full_night_assignments,
         requests=requests_with_preseed, year=year, month=month, target_holidays=target_holidays,
+        locked_assignments=locked_assignments,
     )
 
     # ── 拘束（オンコール）──
@@ -1277,6 +1328,8 @@ def run_schedule(year: int, month: int, data_dir: str = "shift_scheduler/data",
         validation_errors=validation_errors,
         workbook_bytes=workbook_bytes,
         daily_location_needs=daily_location_needs,
+        unlockable_locks=getattr(day_scheduler, "unlockable_locks", []),
+        lock_conflicts=getattr(day_scheduler, "lock_conflicts", []),
     )
 
 
