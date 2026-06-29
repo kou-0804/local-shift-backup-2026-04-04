@@ -8,12 +8,14 @@ from webapp.api.config import settings
 from webapp.api.db import get_db
 from webapp.api.jobs import JobStore, run_job_materialized
 from webapp.api import rosters as roster_ops
+from webapp.api.masters.routes import router as masters_router
 from shift_scheduler.src.excel_directiona import render_directiona
 from main import run_schedule
 
 app = FastAPI(title="勤務表 Web API", version="0.1.0")
 store = JobStore()
 RUNNER = run_schedule  # indirection so tests can monkeypatch a fast fake
+app.include_router(masters_router)
 
 
 class JobRequest(BaseModel):
