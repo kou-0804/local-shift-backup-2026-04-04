@@ -105,3 +105,14 @@ def get_roster_grid(rid: int, conn=Depends(get_db)):
     _roster_or_404(conn, rid)
     grid, _ = roster_ops.build_roster_grid(conn, rid)
     return grid
+
+
+@app.post("/rosters/{rid}/edits")
+def post_edit(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
+    # The edit body is a free dict (ops differ in shape); apply_edit validates it.
+    # `expected_version` mismatch -> 409 with the current grid for client rebase.
+    _roster_or_404(conn, rid)
+    try:
+        return roster_ops.apply_edit(conn, rid, payload)
+    except roster_ops.ConcurrencyError as exc:
+        raise HTTPException(status_code=409, detail=exc.grid)

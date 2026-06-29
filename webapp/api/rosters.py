@@ -167,3 +167,206 @@ def roster_warnings(d):
         d["day_assignments"], d["night_assignments"], d["requests"],
         d["technicians"], d["year"], d["month"], d["target_holidays"],
         daily_location_needs=d["daily_location_needs"])
+
+
+# --- Edit pipeline (assign / unassign / move / toggle_lock) ---
+
+
+class ConcurrencyError(Exception):
+    def __init__(self, grid):
+        self.grid = grid
+
+
+def _has_night(conn, rid, sid, dn, year, month):
+    iso = _iso(year, month, dn)
+    return conn.execute(
+        "SELECT 1 FROM roster_assignments WHERE roster_id=? AND staff_id=? AND date=?"
+        " AND kind='night'", (rid, sid, iso)).fetchone() is not None
+
+
+def _affected(conn, rid, op, payload, year, month):
+    sid = payload["staff_id"]
+    days = calendar.monthrange(year, month)[1]
+    cells = set()
+
+    def add_with_neighbor(dn):
+        cells.add((sid, dn))
+        if _has_night(conn, rid, sid, dn, year, month):
+            if dn < days:
+                cells.add((sid, dn + 1))
+
+    if op in ("assign", "unassign", "set_symbol"):
+        add_with_neighbor(_day_of(payload["date"]))
+    elif op == "move":
+        add_with_neighbor(_day_of(payload["from"]["date"]))
+        add_with_neighbor(_day_of(payload["to"]["date"]))
+    elif op == "toggle_lock":
+        cells.add((sid, _day_of(payload["date"])))
+    return cells
+
+
+def _rows_for_cells(conn, rid, cells, year, month):
+    out = []
+    for sid, dn in sorted(cells):
+        iso = _iso(year, month, dn)
+        for r in conn.execute(
+                "SELECT staff_id,date,kind,location_or_role,symbol,locked "
+                "FROM roster_assignments WHERE roster_id=? AND staff_id=? AND date=?",
+                (rid, sid, iso)):
+            out.append(dict(r))
+    return out
+
+
+def _restore_rows(conn, rid, cells, rows, year, month):
+    """Replace all rows for `cells` with the snapshot `rows` (op-agnostic)."""
+    for sid, dn in cells:
+        conn.execute("DELETE FROM roster_assignments WHERE roster_id=? AND staff_id=?"
+                     " AND date=?", (rid, sid, _iso(year, month, dn)))
+    for r in rows:
+        conn.execute(
+            "INSERT INTO roster_assignments(roster_id,staff_id,date,kind,"
+            "location_or_role,symbol,locked) VALUES(?,?,?,?,?,?,?)",
+            (rid, r["staff_id"], r["date"], r["kind"], r["location_or_role"],
+             r["symbol"], r["locked"]))
+
+
+def _mutate(conn, rid, op, payload, year, month):
+    sid = payload["staff_id"]
+    if op == "assign":
+        iso = payload["date"]
+        keep = conn.execute(
+            "SELECT locked FROM roster_assignments WHERE roster_id=? AND staff_id=?"
+            " AND date=? AND kind='day'", (rid, sid, iso)).fetchone()
+        locked = keep["locked"] if keep else 0
+        conn.execute("DELETE FROM roster_assignments WHERE roster_id=? AND staff_id=?"
+                     " AND date=? AND kind='day'", (rid, sid, iso))
+        conn.execute(
+            "INSERT INTO roster_assignments(roster_id,staff_id,date,kind,"
+            "location_or_role,locked) VALUES(?,?,?,'day',?,?)",
+            (rid, sid, iso, payload["location"], locked))
+    elif op == "unassign":
+        loc = payload.get("location")
+        if loc is not None:
+            conn.execute("DELETE FROM roster_assignments WHERE roster_id=? AND staff_id=?"
+                         " AND date=? AND kind='day' AND location_or_role=?",
+                         (rid, sid, payload["date"], loc))
+        else:
+            conn.execute("DELETE FROM roster_assignments WHERE roster_id=? AND staff_id=?"
+                         " AND date=? AND kind='day'", (rid, sid, payload["date"]))
+    elif op == "move":
+        _mutate(conn, rid, "unassign",
+                {"staff_id": sid, "date": payload["from"]["date"],
+                 "location": payload["from"]["location"]}, year, month)
+        _mutate(conn, rid, "assign",
+                {"staff_id": sid, "date": payload["to"]["date"],
+                 "location": payload["to"]["location"]}, year, month)
+    elif op == "toggle_lock":
+        loc = payload.get("location")
+        cond = " AND location_or_role=?" if loc is not None else ""
+        args = [1 if payload["locked"] else 0, rid, sid, payload["date"]]
+        if loc is not None:
+            args.append(loc)
+        n = conn.execute(
+            "UPDATE roster_assignments SET locked=? WHERE roster_id=? AND staff_id=?"
+            " AND date=? AND kind='day'" + cond, args).rowcount
+        if n == 0 and payload["locked"]:   # empty-cell lock sentinel
+            conn.execute(
+                "INSERT OR IGNORE INTO roster_assignments(roster_id,staff_id,date,kind,"
+                "location_or_role,locked) VALUES(?,?,?,'day',NULL,1)",
+                (rid, sid, payload["date"]))
+
+
+def _changed_cells(conn, rid, grid, cells, year, month):
+    by_staff = {r["staff_id"]: r for r in grid["rows"]}
+    locked = _locked_cells(conn, rid)
+    out = []
+    for sid, dn in sorted(cells):
+        row = by_staff.get(sid)
+        if row is None:
+            continue
+        out.append({
+            "staff_id": sid, "date": _iso(year, month, dn),
+            "text": row["cells"][dn], "category": row["cell_meta"][dn]["kind"],
+            "fill": row["cell_meta"][dn]["fill"],
+            "locked": bool(locked.get((sid, dn), False)), "warnings": []})
+    return out
+
+
+def _recompute_and_persist(conn, rid, affected_staff):
+    d = roster_to_dicts(conn, rid)
+    warnings = recompute_stats(
+        d["day_assignments"], d["night_assignments"], d["requests"],
+        d["technicians"], d["year"], d["month"], d["target_holidays"],
+        daily_location_needs=d["daily_location_needs"])
+    grid = build_grid(d["year"], d["month"], d["technicians"],
+                      d["day_assignments"], d["night_assignments"], d["requests"],
+                      off_counts=warnings["off_counts"],
+                      daikyu_counts=warnings["daikyu_counts"],
+                      cells={(s, 1) for s in affected_staff})
+    for r in grid["rows"]:
+        sid = r["staff_id"]
+        conn.execute(
+            "INSERT OR REPLACE INTO roster_meta(roster_id,staff_id,off_count,"
+            "daikyu_count,stats_json) VALUES(?,?,?,?,?)",
+            (rid, sid, float(warnings["off_counts"].get(sid, 0)),
+             float(warnings["daikyu_counts"].get(sid, 0)),
+             json.dumps(r["stats"] or {}, ensure_ascii=False)))
+    return warnings, grid, d
+
+
+def _warnings_payload(warnings):
+    return {
+        "coverage": warnings["coverage"],
+        "holiday_deficit": warnings["holiday_deficit"],
+        "consecutive": warnings["consecutive"],
+        "night_hb_gaps": warnings["night_hb_gaps"],
+        "skill": []}  # P3 placeholder (needs skills/PB masters)
+
+
+def apply_edit(conn, rid, payload, *, user_id=None):
+    hdr = conn.execute("SELECT version,edit_cursor,year,month FROM rosters WHERE id=?",
+                       (rid,)).fetchone()
+    if hdr is None:
+        raise KeyError(rid)
+    year, month = hdr["year"], hdr["month"]
+    if payload.get("expected_version") != hdr["version"]:
+        grid, d = build_roster_grid(conn, rid)
+        raise ConcurrencyError({"version": hdr["version"], "grid": grid,
+                                "warnings": roster_warnings(d)})
+
+    op = payload["op"]
+    cells = _affected(conn, rid, op, payload, year, month)
+    before = _rows_for_cells(conn, rid, cells, year, month)
+    _mutate(conn, rid, op, payload, year, month)
+    # re-evaluate affected cells AFTER mutation (night row may have appeared/left)
+    cells |= _affected(conn, rid, op, payload, year, month)
+    after = _rows_for_cells(conn, rid, cells, year, month)
+
+    cursor = hdr["edit_cursor"]
+    conn.execute("DELETE FROM roster_edits WHERE roster_id=? AND seq>?", (rid, cursor))
+    seq = cursor + 1
+    cur = conn.execute(
+        "INSERT INTO roster_edits(roster_id,seq,user_id,at,op,payload_json,"
+        "before_json,after_json) VALUES(?,?,?,?,?,?,?,?)",
+        (rid, seq, user_id, _now(), op, json.dumps(payload, ensure_ascii=False),
+         json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
+    edit_id = cur.lastrowid
+    new_version = hdr["version"] + 1
+    conn.execute("UPDATE rosters SET version=?, edit_cursor=? WHERE id=?",
+                 (new_version, seq, rid))
+
+    affected_staff = {sid for sid, _ in cells}
+    warnings, _, _ = _recompute_and_persist(conn, rid, affected_staff)
+    grid, _ = build_roster_grid(conn, rid, cells=cells)
+    changed = _changed_cells(conn, rid, grid, cells, year, month)
+    stats = {r["staff_id"]: r["stats"] for r in grid["rows"]}
+    conn.commit()
+
+    redo = conn.execute(
+        "SELECT 1 FROM roster_edits WHERE roster_id=? AND seq=? AND undone=1",
+        (rid, seq + 1)).fetchone() is not None
+    return {
+        "edit_id": edit_id, "seq": seq, "version": new_version,
+        "changed_cells": changed, "stats": stats,
+        "warnings": _warnings_payload(warnings),
+        "undo_available": seq > 0, "redo_available": redo}
