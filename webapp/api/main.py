@@ -9,6 +9,7 @@ from webapp.api.db import get_db
 from webapp.api.jobs import JobStore, run_job_materialized
 from webapp.api import rosters as roster_ops
 from webapp.api.masters.routes import router as masters_router, sets_router as master_sets_router
+from webapp.api.static import mount_spa
 from shift_scheduler.src.excel_directiona import render_directiona
 from main import run_schedule
 
@@ -185,3 +186,8 @@ def get_roster_excel(rid: int, conn=Depends(get_db)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": disposition},
     )
+
+
+# P4a: same-origin SPA serving. Registered LAST so every explicit API route above
+# is matched before the catch-all fallback. No-op in dev (SHIFT_FRONTEND_DIST unset).
+mount_spa(app, settings.frontend_dist)

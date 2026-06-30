@@ -14,6 +14,14 @@ class Settings:
     # P3: explicit override for which master_set generation should use. When unset,
     # resolve_default_master_set_id() falls back to the seeded set in the DB.
     master_set_id_env: Optional[str] = os.environ.get("SHIFT_MASTER_SET_ID") or None
+    # P4a: built SPA directory (frontend/dist). Unset in dev (Vite serves the SPA
+    # via its proxy); set in prod so the single uvicorn process serves SPA + API.
+    frontend_dist: Optional[str] = os.environ.get("SHIFT_FRONTEND_DIST") or None
+    # P4b: HMAC session-token secret + TTL + the auth-secret fallback file.
+    auth_secret_env: Optional[str] = os.environ.get("SHIFT_AUTH_SECRET") or None
+    auth_secret_path: str = os.environ.get(
+        "SHIFT_AUTH_SECRET_PATH", "webapp_data/.auth_secret")
+    token_ttl_seconds: int = int(os.environ.get("SHIFT_TOKEN_TTL", str(12 * 3600)))
 
 
 settings = Settings()
