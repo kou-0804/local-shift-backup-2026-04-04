@@ -9,6 +9,16 @@ export class ApiError extends Error {
   }
 }
 
+/** Thrown on HTTP 401 (no/expired session). Extends ApiError so existing
+ *  `instanceof ApiError` handlers still catch it, while useAuth/LoginGate can
+ *  detect "not authenticated" specifically via `instanceof AuthError`. */
+export class AuthError extends ApiError {
+  constructor(message = 'authentication required') {
+    super(401, message);
+    this.name = 'AuthError';
+  }
+}
+
 /** Thrown on HTTP 409. Carries the FastAPI `detail` payload so the client can
  *  rebase from the server's current grid (or surface a nothing-to-undo reason). */
 export class ConflictError extends Error {
@@ -65,6 +75,7 @@ export class ServerValidationError extends Error {
 /** Shared non-2xx handler for the master API verbs: 422 → ServerValidationError,
  *  any other non-ok → ApiError. Reads (getJson) keep their own simpler path. */
 async function check(res: Response, path: string): Promise<Response> {
+  if (res.status === 401) throw new AuthError(`401 ${path}`);
   if (res.status === 422) {
     const body = (await readJson(res)) as { detail?: ServerValidationDetail };
     throw new ServerValidationError(body.detail ?? { message: `422 ${path}` });
@@ -73,11 +84,14 @@ async function check(res: Response, path: string): Promise<Response> {
   return res;
 }
 
+// credentials: 'same-origin' makes the httpOnly `session` cookie flow with every
+// API call (same origin in dev via proxy and in prod via mount_spa).
 export async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    credentials: 'same-origin',
   });
   if (res.status === 409) throw new ConflictError(extractConflictDetail(await readJson(res)));
   return (await check(res, path)).json() as Promise<T>;
@@ -88,12 +102,13 @@ export async function putJson<T>(path: string, body: unknown): Promise<T> {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    credentials: 'same-origin',
   });
   return (await check(res, path)).json() as Promise<T>;
 }
 
 export async function delJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' });
+  const res = await fetch(`${BASE}${path}`, { method: 'DELETE', credentials: 'same-origin' });
   return (await check(res, path)).json() as Promise<T>;
 }
 
@@ -104,12 +119,14 @@ export async function postRaw<T>(path: string, body: BodyInit): Promise<T> {
     method: 'POST',
     headers: { 'content-type': 'text/csv' },
     body,
+    credentials: 'same-origin',
   });
   return (await check(res, path)).json() as Promise<T>;
 }
 
 export async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin' });
+  if (res.status === 401) throw new AuthError(`401 ${path}`);
   if (!res.ok) throw new ApiError(res.status, `${res.status} ${path}`);
   return res.json() as Promise<T>;
 }
