@@ -1,56 +1,158 @@
+/* ------------------------------------------------------------------ *
+ * Schedule grid — fixed-layout, uniform-height, aligned spreadsheet.
+ * Every cell is a single line at a fixed height so no row is taller
+ * than another; column widths are pinned via <colgroup> + table-layout
+ * so the sticky header lines up exactly with the body.
+ * ------------------------------------------------------------------ */
+
 .grid-scroll {
   overflow: auto;
   max-height: 80vh;
   position: relative;
+  border: 1px solid #b6bcc7;
+  border-radius: 4px;
+  background: #fff;
 }
+
 .schedule-grid {
-  border-collapse: collapse;
+  border-collapse: separate; /* keep sticky panes reliable in Chromium */
+  border-spacing: 0;
+  table-layout: fixed; /* colgroup widths become authoritative */
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #1f2430;
+  background: #fff;
 }
+
+/* --- pinned column widths (authoritative under table-layout: fixed) ---
+ * Keep these in sync with the COL_* constants in ScheduleGrid.tsx, which
+ * sum them into an explicit table width so fixed layout actually engages. */
+.col-num {
+  width: 34px;
+}
+.col-name {
+  width: 104px;
+}
+.col-day {
+  width: 52px;
+}
+.col-stat {
+  width: 42px;
+}
+
+/* subtle weekend / holiday column tint (shows through transparent cells) */
+.col-day.col-sat {
+  background: #eef4fb;
+}
+.col-day.col-sun {
+  background: #fcedef;
+}
+
+/* --- shared cell box: one line, fixed height, vertically centered --- */
 .schedule-grid th,
 .schedule-grid td {
-  border: 1px solid #ccc;
-  min-width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 3px;
   text-align: center;
-  padding: 1px 2px;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.1;
+  border-right: 1px solid #dde1e8;
+  border-bottom: 1px solid #dde1e8;
 }
-.sticky-name {
-  position: sticky;
-  left: 0;
-  background: #fff;
-  z-index: 2;
-  min-width: 64px;
-}
+
+/* --- header rows (both sticky to the top) --- */
 .schedule-grid thead th {
   position: sticky;
   top: 0;
-  background: #4472c4;
-  color: #fff;
   z-index: 3;
+  background: #3f5b96;
+  color: #fff;
+  font-weight: 600;
+  border-right-color: #54699c;
+  border-bottom-color: #54699c;
 }
-.schedule-grid thead th.sticky-name {
-  z-index: 4;
+.schedule-grid thead th.row2 {
+  top: 28px; /* sits directly below the 28px-tall first header row */
+  background: #49649e;
+  font-weight: 500;
 }
-.col-sat {
-  background: #e3f2fd;
-  color: #000;
+/* keep the weekend hint visible in the header too */
+.schedule-grid thead th.col-sat {
+  background: #335a8c;
 }
-.col-sun {
-  background: #ffebee;
-  color: #000;
+.schedule-grid thead th.col-sun {
+  background: #8a3b48;
 }
+
+/* --- sticky technician id + name columns (left pane) --- */
+.cell-num,
+.cell-name,
+.cell-oncall-label {
+  position: sticky;
+  background: #fff;
+  z-index: 2;
+}
+.cell-num {
+  left: 0;
+  color: #7a808c;
+}
+.cell-name {
+  left: 34px; /* = col-num width, so the two panes never overlap */
+  text-align: left;
+  padding-left: 6px;
+  font-weight: 500;
+}
+
+/* merged technician-name header cell — sticky corner, above all panes */
+.schedule-grid thead th.cell-namehead {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+}
+
+/* zebra striping for easy row tracking */
+.schedule-grid tbody tr:nth-child(even) td {
+  background: #f7f9fc;
+}
+.schedule-grid tbody tr:nth-child(even) .cell-num,
+.schedule-grid tbody tr:nth-child(even) .cell-name {
+  background: #f1f4f9;
+}
+
 .day-cell {
   cursor: pointer;
+  font-size: 11px; /* fit the common codes inside the uniform day column */
 }
-.stat-cell,
-.stat-head {
-  background: #fafafa;
-}
+
 .lock-badge {
   font-size: 9px;
   margin-right: 1px;
 }
+
+/* --- statistics columns --- */
+.stat-cell {
+  background: #eef1f5;
+  color: #333;
+  font-weight: 500;
+}
+.schedule-grid tbody tr:nth-child(even) .stat-cell {
+  background: #e7ebf2;
+}
+
+/* --- on-call summary rows at the bottom --- */
 .oncall-row td {
-  background: #f5f5f5;
+  background: #eef1f5;
   font-weight: 600;
+  height: 26px;
+}
+.cell-oncall-label {
+  left: 0;
+  background: #e6eaf1;
+  font-weight: 700;
+  text-align: left;
+  padding-left: 6px;
 }

@@ -1,5 +1,3 @@
-import { useRef } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import { DndContext, type DragEndEvent } from '@dnd-kit/core';
 import type { RosterState } from '../domain/model';
 import type { CellRef } from '../store/uiStore';
@@ -17,46 +15,53 @@ interface Props {
   onDragEnd: (e: DragEndEvent) => void;
 }
 
+// Column widths — keep in sync with grid.css .col-* rules. They are summed
+// into an explicit table width so `table-layout: fixed` actually engages
+// (with width:auto the browser falls back to uneven content-based columns).
+const COL_NUM = 34;
+const COL_NAME = 104;
+const COL_DAY = 52;
+const COL_STAT = 42;
+
+// Weekend/holiday class for a given day column.
+function dayTint(state: RosterState, d: number): string {
+  const wk = weekendKind(state.weekdays[d] ?? '');
+  const holiday = state.holidays.has(d);
+  return holiday || wk === 'sun' ? 'col-sun' : wk === 'sat' ? 'col-sat' : '';
+}
+
+// ~70 rows render fine without virtualization, and a plain fixed-layout
+// table keeps every row a uniform height with the header perfectly aligned
+// (virtualized transforms jittered when long codes wrapped to two lines).
 export function ScheduleGrid({ state, onCellClick, onDragEnd }: Props) {
-  const parentRef = useRef<HTMLDivElement>(null);
   const days = Array.from({ length: state.daysInMonth }, (_, i) => i + 1);
   const { heatmapMode, highlighted } = useUiStore();
-
-  const rowVirt = useVirtualizer({
-    count: state.rows.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 28,
-    overscan: 12,
-  });
-
-  // When the scroll container has no measurable height (jsdom/SSR/first paint),
-  // the virtualizer yields no items — fall back to rendering every row so the
-  // grid is never blank.
-  const virtualItems = rowVirt.getVirtualItems();
-  const renderRows =
-    virtualItems.length > 0
-      ? virtualItems.map((vi) => ({ row: state.rows[vi.index], start: vi.start, key: state.rows[vi.index].staffId }))
-      : state.rows.map((row, i) => ({ row, start: i * 28, key: row.staffId }));
+  const tableWidth = COL_NUM + COL_NAME + days.length * COL_DAY + state.statsColumns.length * COL_STAT;
 
   return (
     <DndContext onDragEnd={onDragEnd}>
-      <div ref={parentRef} className="grid-scroll">
-        <table className="schedule-grid">
+      <div className="grid-scroll">
+        <table className="schedule-grid" style={{ width: tableWidth }}>
+          <colgroup>
+            <col className="col-num" />
+            <col className="col-name" />
+            {days.map((d) => (
+              <col key={d} className={`col-day ${dayTint(state, d)}`} />
+            ))}
+            {state.statsColumns.map((c) => (
+              <col key={c} className="col-stat" />
+            ))}
+          </colgroup>
           <thead>
             <tr>
-              <th className="sticky-name" colSpan={2}>
+              <th className="cell-namehead" colSpan={2}>
                 技師名
               </th>
-              {days.map((d) => {
-                const wk = weekendKind(state.weekdays[d] ?? '');
-                const holiday = state.holidays.has(d);
-                const cls = holiday || wk === 'sun' ? 'col-sun' : wk === 'sat' ? 'col-sat' : '';
-                return (
-                  <th key={d} className={`day-head ${cls}`}>
-                    {d}
-                  </th>
-                );
-              })}
+              {days.map((d) => (
+                <th key={d} className={`day-head ${dayTint(state, d)}`}>
+                  {d}
+                </th>
+              ))}
               {state.statsColumns.map((c) => (
                 <th key={c} className="stat-head">
                   {c}
@@ -64,24 +69,24 @@ export function ScheduleGrid({ state, onCellClick, onDragEnd }: Props) {
               ))}
             </tr>
             <tr>
-              <th className="sticky-name" colSpan={2}>
+              <th className="cell-namehead row2" colSpan={2}>
                 曜日
               </th>
               {days.map((d) => (
-                <th key={d} className="day-head">
+                <th key={d} className={`day-head row2 ${dayTint(state, d)}`}>
                   {state.weekdays[d] ?? ''}
                 </th>
               ))}
               {state.statsColumns.map((c) => (
-                <th key={c} className="stat-head" />
+                <th key={c} className="stat-head row2" />
               ))}
             </tr>
           </thead>
-          <tbody style={{ height: rowVirt.getTotalSize(), position: 'relative' }}>
-            {renderRows.map(({ row, start, key }) => (
-              <tr key={key} style={{ transform: `translateY(${start}px)` }}>
-                <td className="sticky-name name-cell">{row.staffNum}</td>
-                <td className="sticky-name name-cell">{row.name}</td>
+          <tbody>
+            {state.rows.map((row) => (
+              <tr key={row.staffId}>
+                <td className="cell-num">{row.staffNum}</td>
+                <td className="cell-name">{row.name}</td>
                 {days.map((d) => (
                   <DayCell
                     key={d}
