@@ -3,6 +3,7 @@ import type { MasterKind } from '../types';
 import { StaffEditor } from './StaffEditor';
 import { HolidayTargetsEditor } from './HolidayTargetsEditor';
 import { SkillMatrixEditor } from './SkillMatrixEditor';
+import { LocationPowerBalanceEditor } from './LocationPowerBalanceEditor';
 
 export type EditorComponent = ComponentType<{ setId: number }>;
 
@@ -12,4 +13,5 @@ export const EDITOR_REGISTRY: Partial<Record<MasterKind, EditorComponent>> = {
   staff: StaffEditor,
   holiday_targets: HolidayTargetsEditor,
   skill: SkillMatrixEditor,
+  location_set: LocationPowerBalanceEditor,
 };
