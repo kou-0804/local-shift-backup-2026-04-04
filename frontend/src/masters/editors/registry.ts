@@ -6,6 +6,7 @@ import { SkillMatrixEditor } from './SkillMatrixEditor';
 import { LocationPowerBalanceEditor } from './LocationPowerBalanceEditor';
 import { SpecialRulesEditor } from './SpecialRulesEditor';
 import { TrainingEditor } from './TrainingEditor';
+import { NightQuotaEditor } from './NightQuotaEditor';
 
 export type EditorComponent = ComponentType<{ setId: number }>;
 
@@ -18,4 +19,5 @@ export const EDITOR_REGISTRY: Partial<Record<MasterKind, EditorComponent>> = {
   location_set: LocationPowerBalanceEditor,
   special_rules: SpecialRulesEditor,
   training: TrainingEditor,
+  night_quota: NightQuotaEditor,
 };
