@@ -149,6 +149,7 @@ export interface RequestPreview {
   row_count: number;
   rows: RequestPreviewRow[];
   unresolved: string[];
+  skipped?: number;
   legend?: RequestLegend;
 }
 

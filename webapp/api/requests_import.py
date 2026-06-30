@@ -33,6 +33,37 @@ def _decode(raw: bytes):
     return text, has_bom, newline, trailing_newline
 
 
+def _sniff_delim(text: str) -> str:
+    """Power Apps copies the table to the clipboard as TAB-separated text; uploaded
+    files are comma CSV. Pick the delimiter from the first non-empty line (a tab in
+    that line means TSV)."""
+    for line in text.splitlines():
+        if line.strip():
+            return "\t" if "\t" in line else ","
+    return ","
+
+
+def _normalize_to_comma_csv(raw: bytes) -> bytes:
+    """Accept either a comma CSV (uploaded file) or a TAB-separated paste (the
+    Power Apps clipboard) and return canonical comma-CSV bytes that RequestLoader's
+    pd.read_csv consumes: BOM + CRLF rows + no trailing newline. Comma input is
+    returned UNCHANGED so an uploaded file stays byte-exact on re-upload."""
+    text, *_ = _decode(raw)
+    if _sniff_delim(text) == ",":
+        return raw
+    rows = list(csv.reader(io.StringIO(text), delimiter="\t"))
+    while rows and all(c.strip() == "" for c in rows[-1]):
+        rows.pop()
+    buf = io.StringIO()
+    writer = csv.writer(buf, lineterminator="\r\n")
+    for r in rows:
+        writer.writerow(r)
+    body = buf.getvalue()
+    if body.endswith("\r\n"):
+        body = body[:-2]  # canonical 予定申請.csv carries no trailing newline
+    return BOM + body.encode("utf-8")
+
+
 def _find_header(rows):
     """HolidaySymbol/日付 header within the first 5 physical lines."""
     for i, r in enumerate(rows[:5]):
@@ -55,13 +86,15 @@ def _resolve(rs_name: str, name_to_id: dict):
 
 
 def preview_requests(raw: bytes, name_to_id: dict) -> dict:
-    """Parse + classify rows without persisting. Returns row_count, rows, unresolved."""
+    """Parse + classify rows without persisting. Returns row_count, rows, unresolved,
+    skipped. Accepts a comma CSV (file) or a TAB paste (Power Apps clipboard)."""
+    raw = _normalize_to_comma_csv(raw)
     text, *_ = _decode(raw)
     all_rows = list(csv.reader(io.StringIO(text)))
     h = _find_header(all_rows)
     header = all_rows[h]
     idx = {name: i for i, name in enumerate(header)}
-    out_rows, unresolved = [], []
+    out_rows, unresolved, skipped = [], [], 0
     for r in all_rows[h + 1:]:
         if not r or all(c.strip() == "" for c in r):
             continue
@@ -71,8 +104,10 @@ def preview_requests(raw: bytes, name_to_id: dict) -> dict:
         ppp = cell("PPPDate")
         rsname = cell("RSName")
         if not symbol.strip() or not ppp.strip() or not rsname.strip():
+            skipped += 1
             continue
         if "Sample Data" in rsname:
+            skipped += 1
             continue
         try:
             d = datetime.strptime(ppp.strip(), "%Y/%m/%d").date().isoformat()
@@ -85,12 +120,15 @@ def preview_requests(raw: bytes, name_to_id: dict) -> dict:
         if status != "resolved":
             unresolved.append(row)
     return {"row_count": len(out_rows), "rows": out_rows, "unresolved": unresolved,
-            "legend": HOLIDAY_SYMBOL_LEGEND}
+            "skipped": skipped, "legend": HOLIDAY_SYMBOL_LEGEND}
 
 
 def store_requests(conn, year: int, month: int, raw: bytes, source_filename: str,
                    imported_by: str, name_to_id: dict) -> int:
-    """Persist raw bytes verbatim + parsed request_row rows. Returns import_id."""
+    """Persist raw bytes + parsed request_row rows. Returns import_id. A TAB paste
+    (Power Apps clipboard) is normalized to canonical comma CSV first so the stored
+    BLOB → 予定申請_YYYYMM.csv is what RequestLoader reads; comma input is unchanged."""
+    raw = _normalize_to_comma_csv(raw)
     _, has_bom, newline, trailing_newline = _decode(raw)
     pv = preview_requests(raw, name_to_id)
     imported_at = datetime.now().isoformat(timespec="seconds")

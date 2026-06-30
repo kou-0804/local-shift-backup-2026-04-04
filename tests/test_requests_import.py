@@ -2,7 +2,11 @@
 import sqlite3
 
 from webapp.api.masters.schema import init_master_db
-from webapp.api.requests_import import preview_requests, store_requests
+from webapp.api.requests_import import (
+    preview_requests,
+    store_requests,
+    _normalize_to_comma_csv,
+)
 
 DATA = "shift_scheduler/data"
 
@@ -44,6 +48,41 @@ def test_store_keeps_raw_bytes_for_byte_exact_materialize():
     stored = c.execute(
         "SELECT raw_blob FROM requests_import WHERE id=?", (imp_id,)).fetchone()["raw_blob"]
     assert bytes(stored) == raw                      # verbatim -> 予定申請_202606.csv byte-exact
+
+
+def test_preview_accepts_tab_separated_paste():
+    """Power Apps copies the table as TSV; preview must parse it like the comma CSV."""
+    tsv = (
+        "HolidaySymbol\tPPPDate\tRSName\r\n"
+        "◆\t2026/07/01\t03 矢野　昌男\r\n"
+        "☆\t2026/07/04\t14 下田　あず沙\r\n"
+        "\t2026/07/07\t99 Sample Data \r\n"  # blank symbol → skipped
+    ).encode("utf-8")
+    pv = preview_requests(tsv, {"矢野　昌男": "T003"})
+    assert pv["row_count"] == 2
+    assert pv["skipped"] >= 1
+    assert {r["symbol"] for r in pv["rows"]} == {"◆", "☆"}
+    resolved = [r for r in pv["rows"] if r["resolve_status"] == "resolved"]
+    assert any(r["tech_id_resolved"] == "T003" for r in resolved)
+
+
+def test_normalize_tab_paste_to_canonical_comma_csv():
+    """A TAB paste becomes canonical comma CSV (BOM, no tabs) — what RequestLoader reads."""
+    tsv = (
+        "HolidaySymbol\tPPPDate\tRSName\r\n"
+        "◆\t2026/07/01\t03 矢野　昌男\r\n"
+    ).encode("utf-8")
+    norm = _normalize_to_comma_csv(tsv)
+    assert norm.startswith(b"\xef\xbb\xbf")        # BOM
+    assert b"\t" not in norm                        # tabs converted
+    assert b"HolidaySymbol,PPPDate,RSName" in norm
+    assert not norm.endswith(b"\r\n")               # no trailing newline (canonical)
+
+
+def test_normalize_leaves_comma_csv_unchanged():
+    """Comma input (uploaded file) passes through byte-for-byte (verbatim re-upload)."""
+    raw = open(f"{DATA}/予定申請.csv", "rb").read()
+    assert _normalize_to_comma_csv(raw) == raw
 
 
 def test_store_writes_request_rows_and_year_month():
