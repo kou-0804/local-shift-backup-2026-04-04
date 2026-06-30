@@ -5,6 +5,7 @@ import { HolidayTargetsEditor } from './HolidayTargetsEditor';
 import { SkillMatrixEditor } from './SkillMatrixEditor';
 import { LocationPowerBalanceEditor } from './LocationPowerBalanceEditor';
 import { SpecialRulesEditor } from './SpecialRulesEditor';
+import { TrainingEditor } from './TrainingEditor';
 
 export type EditorComponent = ComponentType<{ setId: number }>;
 
@@ -16,4 +17,5 @@ export const EDITOR_REGISTRY: Partial<Record<MasterKind, EditorComponent>> = {
   skill: SkillMatrixEditor,
   location_set: LocationPowerBalanceEditor,
   special_rules: SpecialRulesEditor,
+  training: TrainingEditor,
 };
