@@ -97,3 +97,56 @@ def test_admin_can_list_and_create_users(client_with_users):
 def test_non_admin_cannot_manage_users(client_with_users):
     cookie = _cookie(client_with_users, "ed", "editorpw123")
     assert client_with_users.get("/auth/users", cookies=cookie).status_code == 403
+
+
+# --- P4b-5: role-gate jobs/rosters/masters ----------------------------------
+
+def _client_as(login_id, password):
+    """A TestClient whose cookie jar holds a fresh session for `login_id`."""
+    c = TestClient(main.app)
+    r = c.post("/auth/login", json={"login_id": login_id, "password": password})
+    assert r.status_code == 200, r.text
+    return c
+
+
+def test_unauthenticated_is_401_on_protected(client_with_users):
+    assert client_with_users.post("/jobs", json={"year": 2026, "month": 6}).status_code == 401
+    assert client_with_users.get("/rosters/999").status_code == 401
+
+
+def test_viewer_cannot_generate(client_with_users):
+    c = _client_as("vw", "viewerpw123")
+    assert c.post("/jobs", json={"year": 2026, "month": 6}).status_code == 403
+
+
+def test_viewer_cannot_read_draft_roster(client_with_users):
+    c = _client_as("vw", "viewerpw123")
+    assert c.get("/rosters/999").status_code == 403
+
+
+def test_editor_passes_gate_to_404_on_missing_roster(client_with_users):
+    # Gate allows editor -> request falls through to the real 404, NOT 403.
+    c = _client_as("ed", "editorpw123")
+    assert c.get("/rosters/999").status_code == 404
+
+
+def test_admin_can_generate_gate(client_with_users, monkeypatch):
+    # Replace the runner so we don't spin the real solver; we only test the gate.
+    from shift_scheduler.src.models.schedule_result import ScheduleResult
+    monkeypatch.setattr(main, "RUNNER", lambda y, m, data_dir: ScheduleResult(
+        year=y, month=m, staff=[], day_assignments={}, night_assignments={},
+        requests={}, on_call_assignments={}, daikyu_counts={}, off_counts={},
+        validation_errors=[], workbook_bytes=b"PK"))
+    c = _client_as("admin", "adminpw123")
+    assert c.post("/jobs", json={"year": 2026, "month": 6}).status_code == 201
+
+
+def test_editor_cannot_write_masters_but_can_read(client_with_users):
+    c = _client_as("ed", "editorpw123")
+    assert c.put("/masters/1/training", json=[]).status_code == 403
+    assert c.get("/master-sets").status_code == 200
+
+
+def test_viewer_cannot_read_masters(client_with_users):
+    c = _client_as("vw", "viewerpw123")
+    assert c.get("/master-sets").status_code == 403

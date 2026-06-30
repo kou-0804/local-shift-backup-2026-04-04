@@ -6,15 +6,29 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from webapp.api.db import get_db
+from webapp.api.auth.deps import current_user
 from webapp.api.requests_import import preview_requests, store_requests
 from . import crud
 from .safety import LOAD_BEARING_IDS, SafetyError, assert_load_bearing_ids
 from .validation import ValidationError
 
-router = APIRouter(prefix="/masters", tags=["masters"])
+
+def masters_guard(request: Request, user: dict = Depends(current_user)) -> dict:
+    """Role gate for the whole master namespace (P4b): reads (GET) need
+    admin|editor; writes (POST/PUT/DELETE, incl. clone + 予定申請 import) need
+    admin. One method-aware guard avoids per-route drift."""
+    write = request.method in ("POST", "PUT", "DELETE")
+    allowed = {"admin"} if write else {"admin", "editor"}
+    if user["role"] not in allowed:
+        raise HTTPException(status_code=403, detail="insufficient role")
+    return user
+
+
+router = APIRouter(prefix="/masters", tags=["masters"],
+                   dependencies=[Depends(masters_guard)])
 # Separate (unprefixed) router so the collection lives at /master-sets, not
 # /masters/...; included alongside `router` in webapp/api/main.py.
-sets_router = APIRouter(tags=["masters"])
+sets_router = APIRouter(tags=["masters"], dependencies=[Depends(masters_guard)])
 
 
 @sets_router.get("/master-sets")

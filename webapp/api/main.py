@@ -10,7 +10,13 @@ from webapp.api.jobs import JobStore, run_job_materialized
 from webapp.api import rosters as roster_ops
 from webapp.api.masters.routes import router as masters_router, sets_router as master_sets_router
 from webapp.api.auth.routes import router as auth_router
+from webapp.api.auth.deps import require_role
 from webapp.api.static import mount_spa
+
+# Role gates (spec §10): admin = generate/masters-edit/confirm/user-mgmt;
+# editor = roster edits + re-solve + reads; viewer = confirmed archives only.
+ADMIN = require_role("admin")
+STAFF = require_role("admin", "editor")  # admin OR editor
 from shift_scheduler.src.excel_directiona import render_directiona
 from main import run_schedule
 
@@ -32,7 +38,7 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/jobs", status_code=201)
+@app.post("/jobs", status_code=201, dependencies=[Depends(ADMIN)])
 def create_job(req: JobRequest, background: BackgroundTasks):
     job = store.create(req.year, req.month)
     # P3: generation runs against a temp data_dir materialized from the default
@@ -41,7 +47,7 @@ def create_job(req: JobRequest, background: BackgroundTasks):
     return {"id": job.id, "status": job.status}
 
 
-@app.get("/jobs/{job_id}")
+@app.get("/jobs/{job_id}", dependencies=[Depends(STAFF)])
 def get_job(job_id: str):
     job = store.get(job_id)
     if job is None:
@@ -57,12 +63,12 @@ def _require_done(job_id: str):
     return job
 
 
-@app.get("/jobs/{job_id}/result")
+@app.get("/jobs/{job_id}/result", dependencies=[Depends(STAFF)])
 def get_result(job_id: str):
     return _require_done(job_id).result.as_dict()
 
 
-@app.get("/jobs/{job_id}/excel")
+@app.get("/jobs/{job_id}/excel", dependencies=[Depends(STAFF)])
 def get_excel(job_id: str):
     job = _require_done(job_id)
     filename = f"勤務表_{job.year}年{job.month}月.xlsx"
@@ -78,7 +84,7 @@ def get_excel(job_id: str):
 # --- P2a-2: roster editing backend (freeze / read / edit / undo / redo) ---
 
 
-@app.post("/jobs/{job_id}/freeze", status_code=201)
+@app.post("/jobs/{job_id}/freeze", status_code=201, dependencies=[Depends(STAFF)])
 def freeze_job(job_id: str, conn=Depends(get_db)):
     job = store.get(job_id)
     if job is None or job.result is None:
@@ -98,7 +104,7 @@ def _roster_or_404(conn, rid):
         raise HTTPException(status_code=404, detail="roster not found")
 
 
-@app.get("/rosters/{rid}")
+@app.get("/rosters/{rid}", dependencies=[Depends(STAFF)])
 def get_roster(rid: int, conn=Depends(get_db)):
     _roster_or_404(conn, rid)
     grid, d = roster_ops.build_roster_grid(conn, rid)
@@ -109,14 +115,14 @@ def get_roster(rid: int, conn=Depends(get_db)):
             "grid": grid, "warnings": roster_ops.roster_warnings(d)}
 
 
-@app.get("/rosters/{rid}/grid")
+@app.get("/rosters/{rid}/grid", dependencies=[Depends(STAFF)])
 def get_roster_grid(rid: int, conn=Depends(get_db)):
     _roster_or_404(conn, rid)
     grid, _ = roster_ops.build_roster_grid(conn, rid)
     return grid
 
 
-@app.post("/rosters/{rid}/edits")
+@app.post("/rosters/{rid}/edits", dependencies=[Depends(STAFF)])
 def post_edit(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
     # The edit body is a free dict (ops differ in shape); apply_edit validates it.
     # `expected_version` mismatch -> 409 with the current grid for client rebase.
@@ -127,7 +133,7 @@ def post_edit(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
         raise HTTPException(status_code=409, detail=exc.grid)
 
 
-@app.post("/rosters/{rid}/undo")
+@app.post("/rosters/{rid}/undo", dependencies=[Depends(STAFF)])
 def post_undo(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
     _roster_or_404(conn, rid)
     try:
@@ -136,7 +142,7 @@ def post_undo(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
         raise HTTPException(status_code=409, detail=exc.grid)
 
 
-@app.post("/rosters/{rid}/redo")
+@app.post("/rosters/{rid}/redo", dependencies=[Depends(STAFF)])
 def post_redo(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
     _roster_or_404(conn, rid)
     try:
@@ -145,7 +151,7 @@ def post_redo(rid: int, payload: Dict[str, Any], conn=Depends(get_db)):
         raise HTTPException(status_code=409, detail=exc.grid)
 
 
-@app.post("/rosters/{rid}/resolve")
+@app.post("/rosters/{rid}/resolve", dependencies=[Depends(STAFF)])
 def post_resolve(rid: int, conn=Depends(get_db)):
     """P2b partial-lock re-solve: re-run the solver holding locked=1 day cells fixed,
     re-freeze (keep locked / replace unlocked), record an undoable op='resolve' edit.
@@ -172,7 +178,7 @@ def _format_warnings(rc: dict, month: int) -> list:
     return out
 
 
-@app.get("/rosters/{rid}/excel")
+@app.get("/rosters/{rid}/excel", dependencies=[Depends(STAFF)])
 def get_roster_excel(rid: int, conn=Depends(get_db)):
     """凍結ロスターから Direction-A Excel を生成して配信。
     build_grid → recompute_stats(live) → render_directiona の順で派生はレンダラ外。"""

@@ -1,9 +1,20 @@
+"""P4a: mount_spa same-origin serving + API-aware SPA fallback.
+
+Built on an ISOLATED throwaway FastAPI app (not webapp.api.main) so the test
+never reloads the real app module — reloading would swap main.app's identity
+and desync the module-bound `app`/`get_db` references the rest of the suite
+imported at collection time. We exercise mount_spa directly with a couple of
+stand-in API routes that mirror the real namespace (/health JSON, /jobs 404).
+"""
 import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+
+from webapp.api.static import mount_spa
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
+def client(tmp_path):
     dist = tmp_path / "dist"
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text(
@@ -13,17 +24,21 @@ def client(tmp_path, monkeypatch):
     )
     (dist / "assets" / "app.js").write_text("console.log('spa')", encoding="utf-8")
     (dist / "favicon.ico").write_bytes(b"\x00\x00\x01\x00")
-    monkeypatch.setenv("SHIFT_FRONTEND_DIST", str(dist))
-    # Import after env is set so config picks up the dist dir.
-    import importlib
-    import webapp.api.config as config
-    importlib.reload(config)
-    import webapp.api.main as main
-    importlib.reload(main)
-    yield TestClient(main.app)
-    # Restore the unmounted app for the rest of the suite.
-    importlib.reload(config)
-    importlib.reload(main)
+
+    app = FastAPI()
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.get("/jobs/{job_id}")
+    def get_job(job_id: str):
+        # Stand-in: any id is "missing" -> a genuine JSON 404 that the SPA
+        # fallback must NOT swallow.
+        raise HTTPException(status_code=404, detail="job not found")
+
+    assert mount_spa(app, str(dist)) is True
+    return TestClient(app)
 
 
 def test_root_serves_spa_index(client):
@@ -70,3 +85,17 @@ def test_unknown_api_route_is_404_json_not_index(client):
     r = client.get("/jobs/does-not-exist")
     assert r.status_code == 404
     assert 'id="root"' not in r.text
+
+
+def test_deep_api_path_with_no_route_404s_via_guard(client):
+    # A path under an API prefix that matches no explicit route hits the catch-all,
+    # whose API_PREFIXES guard 404s it instead of returning the SPA shell.
+    r = client.get("/jobs/deep/extra/segments")
+    assert r.status_code == 404
+    assert 'id="root"' not in r.text
+
+
+def test_mount_spa_noop_without_dist(tmp_path):
+    app = FastAPI()
+    assert mount_spa(app, None) is False
+    assert mount_spa(app, str(tmp_path / "missing")) is False
