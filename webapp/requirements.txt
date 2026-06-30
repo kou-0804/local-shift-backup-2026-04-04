@@ -1,4 +1,18 @@
-# webapp/requirements.txt
-fastapi>=0.110
-uvicorn[standard]>=0.29
-httpx>=0.27
+# webapp/requirements.txt — pinned to the versions validated in this repo's .venv.
+#
+# Auth is STDLIB-ONLY (hashlib.pbkdf2_hmac + hmac + secrets) — NO passlib / jose /
+# itsdangerous. python-multipart is intentionally NOT included: both /auth/login
+# and the 予定申請 import use raw JSON / raw request body, never multipart/form-data.
+# Fewer moving parts = a simpler hospital-IT install (spec §13).
+fastapi==0.138.1
+uvicorn[standard]==0.49.0
+starlette==1.3.1
+httpx==0.28.1            # used by Starlette TestClient (tests) + as an HTTP dep
+pydantic==2.13.4
+openpyxl==3.1.5          # Direction-A xlsx render
+# The solver stack (ortools / pandas / numpy / jpholiday) is installed from the
+# existing shift_scheduler requirements; pinned here for a reproducible host:
+ortools==9.14.6206
+pandas==2.3.3
+numpy==2.3.5
+jpholiday==1.0.2
