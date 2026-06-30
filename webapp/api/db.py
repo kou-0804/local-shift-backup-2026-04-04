@@ -4,6 +4,7 @@ import sqlite3
 from webapp.api.config import settings
 from webapp.api.masters.schema import init_master_db
 from webapp.api.auth.schema import init_auth_db
+from webapp.api.archive.schema import init_archive_db
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS rosters (
@@ -61,6 +62,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     init_master_db(conn)
     # P4b: additive users table (auth).
     init_auth_db(conn)
+    # P4c: additive archives table (confirmed-month immutable Excel snapshots).
+    init_archive_db(conn)
 
 
 def get_db():
