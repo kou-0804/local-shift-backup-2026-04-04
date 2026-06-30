@@ -116,3 +116,21 @@
 4. 既存データ移行（§6.3-A）＋**パリティ/決定性ゲート**で出力一致を確認。
 5. 夜勤スキル二択UI＋`data-night`色分け＋transforms/types整理。フロントテスト書き換え。
 6. 全テスト（バック＋フロント）＋本番ビルド＋実APIでの目視確認。
+
+## 11. 実装メモ（確定）
+
+§6.3 では当初バックエンドGETでの解決＋一度きり移行を想定したが、検証の結果
+**バックエンド無改造・フロント側解決**に変更した（より安全）。理由と最終形:
+
+- バックエンドGETで空欄を解決すると、API往復（GET→PUT→materialize）で
+  `夜勤スキル一覧.csv` がバイト単位で変化し、必須制約「Excel/Power Apps 完全一致」
+  を破る（`test_noop_put_roundtrip_is_byte_identical` が検知）。
+- そこで **解決は表示層（フロント）で実施**。バックエンド（crud/routes/materialize/
+  loader）は一切変更しない＝往復のバイト同一性とスケジューラ出力を完全維持。
+- フロント `NightSkillEditor.tsx`:
+  - `useSkillMatrix` を併用し、空欄セルを `data_loader.py:38-44` と同一規則で
+    `TRUE`/`FALSE` に解決して2状態表示（MR=max(病院MR,CLMR)≥B / angio=ア≥B / cath=心≥B）。
+  - 保存(PUT)で全セルを明示値 `TRUE`/`FALSE` として書き込み＝以後は日中スキルと独立（①）。
+  - `data-night` で 🟩可/🟥不可 を色分け（`masters.css`）。
+- 別途の移行スクリプト・import時解決は不要化（保存で確定するため）。GET/PUTの生値仕様は不変。
+- 検証: frontend 124 / backend(master write) 16 すべて合格。コミット 078fc21（視覚刷新）・062763e（夜勤2状態）。
