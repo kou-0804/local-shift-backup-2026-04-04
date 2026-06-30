@@ -62,7 +62,7 @@ export function SkillMatrixEditor({ setId }: { setId: number }) {
                 const original = (r.cells[loc] ?? '-') as Rank;
                 const value = rankAt(r.tech_id, loc, original);
                 return (
-                  <td key={loc}>
+                  <td key={loc} data-rank={value}>
                     <select
                       data-testid={`skill-${r.tech_id}-${loc}`}
                       value={value}

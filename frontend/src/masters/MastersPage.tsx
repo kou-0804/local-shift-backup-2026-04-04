@@ -6,6 +6,7 @@ import { MasterNav, MASTER_LABEL } from './shell/MasterNav';
 import { SafetyGateBanner } from './shell/SafetyGateBanner';
 import { EDITOR_REGISTRY } from './editors/registry';
 import type { MasterKind } from './types';
+import './masters.css';
 
 const MASTER_KINDS: MasterKind[] = [
   'staff',

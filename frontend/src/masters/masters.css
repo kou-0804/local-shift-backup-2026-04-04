@@ -1,0 +1,234 @@
+/* マスター管理画面の見た目 — 院内ITシステム調のクリーン/クリニカルなテーマ。
+ * すべて .masters-page 配下にスコープし、ロスター用 grid.css / roster.css に影響させない。
+ * 配色: 白＋スレートグレー基調、アクセントは医療系ティール(#0f766e)。 */
+
+.masters-page {
+  --ms-teal: #0f766e;
+  --ms-teal-weak: #f0fdfa;
+  --ms-ink: #0f172a;
+  --ms-body: #334155;
+  --ms-muted: #64748b;
+  --ms-border: #e2e8f0;
+  --ms-surface: #ffffff;
+  --ms-bg: #f8fafc;
+
+  color: var(--ms-body);
+  background: var(--ms-bg);
+  padding: 20px 24px 48px;
+  font-feature-settings: 'palt';
+  -webkit-font-smoothing: antialiased;
+}
+
+.masters-page h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ms-ink);
+  letter-spacing: 0.02em;
+  margin: 0 0 18px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--ms-border);
+}
+
+.masters-page h2 {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ms-ink);
+  margin: 0 0 14px;
+  padding-left: 10px;
+  border-left: 4px solid var(--ms-teal);
+}
+
+/* ── タブナビ（ピル型） ───────────────────────────── */
+.masters-page .master-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 14px 0 18px;
+  padding: 6px;
+  background: var(--ms-surface);
+  border: 1px solid var(--ms-border);
+  border-radius: 12px;
+}
+
+.masters-page .master-nav button {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ms-muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.masters-page .master-nav button:hover {
+  background: var(--ms-teal-weak);
+  color: var(--ms-teal);
+}
+
+.masters-page .master-nav button[aria-selected='true'] {
+  background: var(--ms-teal);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(15, 118, 110, 0.35);
+}
+
+/* ── エディタのカード化 ──────────────────────────── */
+.masters-page .master-editor {
+  background: var(--ms-surface);
+  border: 1px solid var(--ms-border);
+  border-radius: 14px;
+  padding: 22px 24px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+/* ── セット選択 ───────────────────────────────── */
+.masters-page .master-set-selector {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: var(--ms-body);
+}
+
+/* ── テーブル全般 ─────────────────────────────── */
+.masters-page table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  font-size: 13px;
+  color: var(--ms-body);
+  border: 1px solid var(--ms-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.masters-page thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f1f5f9;
+  color: var(--ms-ink);
+  font-weight: 700;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--ms-border);
+}
+
+.masters-page tbody td {
+  padding: 7px 12px;
+  border-bottom: 1px solid #eef2f7;
+  vertical-align: middle;
+}
+
+.masters-page tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.masters-page tbody tr:hover td {
+  background: #fafcff;
+}
+
+/* ── 入力要素 ─────────────────────────────────── */
+.masters-page select,
+.masters-page input[type='text'],
+.masters-page input[type='number'] {
+  font-size: 13px;
+  color: var(--ms-ink);
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 4px 8px;
+}
+
+.masters-page select:focus,
+.masters-page input:focus {
+  outline: none;
+  border-color: var(--ms-teal);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+}
+
+.masters-page button[type='button'] {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ms-teal);
+  background: var(--ms-teal-weak);
+  border: 1px solid #99f6e4;
+  border-radius: 7px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.masters-page button[type='button']:hover {
+  background: #ccfbf1;
+}
+
+.masters-page .note,
+.masters-page [role='note'] {
+  font-size: 12px;
+  color: var(--ms-muted);
+  background: #f8fafc;
+  border-left: 3px solid #cbd5e1;
+  padding: 8px 12px;
+  border-radius: 0 6px 6px 0;
+  margin: 12px 0;
+  line-height: 1.6;
+}
+
+/* ── スキルマスタ: ランク色分け（A〜D / -）────────────
+ * 文字(A〜D)は残しつつセル背景＋文字色で習熟度を一目で。 */
+.masters-page .skill-editor td[data-rank] {
+  text-align: center;
+  transition: background 0.1s ease;
+}
+
+.masters-page .skill-editor td[data-rank] select {
+  background: transparent;
+  border-color: transparent;
+  font-weight: 700;
+  text-align: center;
+  text-align-last: center;
+  cursor: pointer;
+}
+
+.masters-page .skill-editor td[data-rank] select:focus {
+  background: #fff;
+}
+
+.masters-page .skill-editor td[data-rank='A'] { background: #dcfce7; }
+.masters-page .skill-editor td[data-rank='A'] select { color: #15803d; }
+.masters-page .skill-editor td[data-rank='B'] { background: #dbeafe; }
+.masters-page .skill-editor td[data-rank='B'] select { color: #1d4ed8; }
+.masters-page .skill-editor td[data-rank='C'] { background: #fef3c7; }
+.masters-page .skill-editor td[data-rank='C'] select { color: #b45309; }
+.masters-page .skill-editor td[data-rank='D'] { background: #ffedd5; }
+.masters-page .skill-editor td[data-rank='D'] select { color: #c2410c; }
+.masters-page .skill-editor td[data-rank='-'] { background: #f1f5f9; }
+.masters-page .skill-editor td[data-rank='-'] select { color: #94a3b8; }
+
+/* ── 夜勤スキル: 2状態（夜勤可 / 夜勤不可）色分け ─────── */
+.masters-page .night-skill-editor td[data-night] {
+  text-align: center;
+}
+
+.masters-page .night-skill-editor td[data-night] select {
+  background: transparent;
+  border-color: transparent;
+  font-weight: 700;
+  text-align: center;
+  text-align-last: center;
+  cursor: pointer;
+}
+
+.masters-page .night-skill-editor td[data-night] select:focus {
+  background: #fff;
+}
+
+.masters-page .night-skill-editor td[data-night='TRUE'] { background: #dcfce7; }
+.masters-page .night-skill-editor td[data-night='TRUE'] select { color: #15803d; }
+.masters-page .night-skill-editor td[data-night='FALSE'] { background: #fee2e2; }
+.masters-page .night-skill-editor td[data-night='FALSE'] select { color: #b91c1c; }
