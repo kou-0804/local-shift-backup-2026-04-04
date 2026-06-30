@@ -3,6 +3,7 @@ import { useStaff } from '../query/useMasterData';
 import { useMasterMutation } from '../query/useMasterMutation';
 import * as api from '../api/mastersApi';
 import { isTechId } from '../validation/validators';
+import { EXPERIENCE_OPTIONS, expToOptionValue, optionValueToExp } from './transforms/experienceBand';
 import { ValidationErrorList } from '../shell/ValidationErrorList';
 import { AdvisoryWarnings } from '../shell/AdvisoryWarnings';
 import type { StaffRow } from '../types';
@@ -105,12 +106,17 @@ export function StaffEditor({ setId }: { setId: number }) {
                   </select>
                 </td>
                 <td>
-                  <input
-                    type="number"
-                    min={0}
-                    value={c.experience_years}
-                    onChange={(e) => editField(r, 'experience_years', Number(e.target.value))}
-                  />
+                  <select
+                    data-testid={`staff-exp-${r.tech_id}`}
+                    value={expToOptionValue(Number(c.experience_years))}
+                    onChange={(e) => editField(r, 'experience_years', optionValueToExp(e.target.value))}
+                  >
+                    {EXPERIENCE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
                 </td>
                 <td>
                   <select value={c.night_ok} onChange={(e) => editField(r, 'night_ok', e.target.value)}>
