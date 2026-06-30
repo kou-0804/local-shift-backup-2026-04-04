@@ -27,8 +27,12 @@ def main():
         validation_errors=result.validation_errors,
     )
     days = gen.days_in_month
+    # build_grid is the single source for all live paths (Excel/web/edit), incl.
+    # display-only overrides like 矢野(T003) の MR 表記。Derive expected_cells from it
+    # (not the legacy _get_assignment_text, which bypasses build_grid's overrides).
+    cells_by_sid = {r["staff_id"]: r["cells"] for r in gen.grid["rows"]}
     expected_cells = {
-        t.id: {str(d): gen._get_assignment_text(t.id, d) for d in range(1, days + 1)}
+        t.id: {str(d): cells_by_sid.get(t.id, {}).get(d, "") for d in range(1, days + 1)}
         for t in active
     }
     fixture = {

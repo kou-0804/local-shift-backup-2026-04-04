@@ -80,6 +80,8 @@ def cell_fill(cell_value: str):
 import calendar
 from datetime import date
 
+from .stats_engine import _is_public_off  # 祝日/日曜判定の単一ソース（MR表記の祝日除外に使用）
+
 # 21-column stats labels — excel_generator.py:100,144,202 (single source).
 STATS_COLUMNS = ['夜勤', '病院MR', 'CLMR', '病CT', 'CT', 'ア', '心', 'ク', 'ポ', '精',
                  'MG', 'DR', 'HB', 'OP', '入', '病L', '超遅', 'ク遅', 'M遅', '公休', '代休']
@@ -92,6 +94,15 @@ WORK_LOCATION_CODES = {
 }
 _WEEKDAY = ['月', '火', '水', '木', '金', '土', '日']
 _SPECIAL_OFF = {'★', '☆', '◆'}
+
+# 時短スタッフの「表記のみ」固定配置（どの集計にも入れない）。
+# 矢野(T003)は高齢・時短で、MRI手伝いとして毎週 月火木金 に「MR」と“表記だけ”表示する。
+# build_grid では集計(_count_row)が終わった後に差し替えるため、夜勤/病院MR等いずれの
+# 統計にも入らず、has_work も変えないので統計行は従来どおり非表示のまま。普段「休/空欄」の
+# 平日だけを対象にし、◆申請休・夜勤明け(○)・祝日（出勤しない前提）はそのまま残す。
+DISPLAY_ONLY_FIXED = {
+    'T003': {'weekdays': {'月', '火', '木', '金'}, 'label': 'MR'},
+}
 
 
 def _kind_for(text):
@@ -167,6 +178,20 @@ def build_grid(year, month, technicians, day_assignments, night_assignments,
         counts, has_work = _count_row(row_cells)
         counts['公休'] = off_counts.get(t.id, 0)      # inject AFTER counting (:195-196)
         counts['代休'] = daikyu_counts.get(t.id, 0)
+
+        # 表示のみの固定配置（集計対象外）。集計が済んだ後に差し替えるので、どの統計にも
+        # 入らず has_work も変えない。普段「休/空欄」の対象曜日だけを上書きし、◆申請休・
+        # 夜勤明け(○)・夜勤・祝日（_is_public_off）はそのまま残す。
+        fixed = DISPLAY_ONLY_FIXED.get(t.id)
+        if fixed:
+            for d in range(1, days + 1):
+                if (weekdays[d] in fixed['weekdays']
+                        and row_cells[d] in ('', '休')
+                        and not _is_public_off(date(year, month, d))):
+                    row_cells[d] = fixed['label']
+                    cell_meta[d] = {"kind": _kind_for(fixed['label']),
+                                    "fill": cell_fill(fixed['label'])}
+
         rows.append({
             "staff_id": t.id, "staff_num": num, "name": t.name,
             "cells": row_cells, "cell_meta": cell_meta,
