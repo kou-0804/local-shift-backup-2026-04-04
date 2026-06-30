@@ -8,6 +8,8 @@ import { toIsoDate } from '../normalize/dates';
 import { ScheduleGrid } from './ScheduleGrid';
 import { EditPopover } from './EditPopover';
 import { WarningPanel } from './WarningPanel';
+import { Legend } from './Legend';
+import './roster.css';
 import { EditToolbar } from './EditToolbar';
 import { ConflictDialog } from './ConflictDialog';
 import { postConfirm } from '../api/editsApi';
@@ -60,6 +62,7 @@ export function RosterPage({ rosterId }: { rosterId: string }) {
         }}
         onConfirm={() => void postConfirm(rosterId, state.version)}
       />
+      <Legend />
       <div className="roster-body">
         <ScheduleGrid state={state} onCellClick={onCellClick} onDragEnd={onDragEnd} />
         <WarningPanel state={state} />
