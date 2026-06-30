@@ -124,3 +124,103 @@ def test_toggle_lock_no_stats_change(tmp_path):
         assert cell["locked"] is True
     finally:
         app.dependency_overrides.clear()
+
+
+def _request_rows(conn, rid, sid, iso):
+    return conn.execute(
+        "SELECT symbol FROM roster_assignments WHERE roster_id=? AND staff_id=?"
+        " AND date=? AND kind='request'", (rid, sid, iso)).fetchall()
+
+
+def test_set_symbol_sets_cell_and_version(tmp_path):
+    # 2026-06-03 is a blank weekday for T002 (no day assignment) -> the request
+    # symbol becomes the cell text verbatim (grid_derivation.derive_cell_text).
+    conn, rid = _seed(tmp_path)
+    try:
+        r = _client(conn).post(f"/rosters/{rid}/edits", json={
+            "op": "set_symbol", "staff_id": "T002", "date": "2026-06-03",
+            "symbol": "☆", "expected_version": 0})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["version"] == 1 and body["seq"] == 1
+        cell = next(c for c in body["changed_cells"]
+                    if c["staff_id"] == "T002" and c["date"] == "2026-06-03")
+        assert cell["text"] == "☆"
+        assert cell["category"] == "special_off"
+        # exactly one request row persisted, carrying the new symbol
+        rows = _request_rows(conn, rid, "T002", "2026-06-03")
+        assert [r["symbol"] for r in rows] == ["☆"]
+        assert body["undo_available"] is True and body["redo_available"] is False
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_set_symbol_recomputes_off(tmp_path):
+    # T001 works CT on day 1. A pure-holiday symbol reclassifies that day as off,
+    # so 公休 rises by exactly 1; clearing it reverts to work. Proves the symbol
+    # drives the off/代休 recompute (T001 has_work -> stats present).
+    conn, rid = _seed(tmp_path)
+    client = _client(conn)
+    try:
+        r1 = client.post(f"/rosters/{rid}/edits", json={
+            "op": "set_symbol", "staff_id": "T001", "date": "2026-06-01",
+            "symbol": "☆", "expected_version": 0})
+        assert r1.status_code == 200
+        off_holiday = r1.json()["stats"]["T001"]["公休"]
+        r2 = client.post(f"/rosters/{rid}/edits", json={
+            "op": "set_symbol", "staff_id": "T001", "date": "2026-06-01",
+            "symbol": None, "expected_version": 1})
+        assert r2.status_code == 200
+        off_work = r2.json()["stats"]["T001"]["公休"]
+        assert off_holiday == off_work + 1.0
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_set_symbol_null_clears(tmp_path):
+    conn, rid = _seed(tmp_path)
+    client = _client(conn)
+    try:
+        r1 = client.post(f"/rosters/{rid}/edits", json={
+            "op": "set_symbol", "staff_id": "T002", "date": "2026-06-03",
+            "symbol": "◆", "expected_version": 0})
+        assert r1.status_code == 200
+        assert _request_rows(conn, rid, "T002", "2026-06-03")  # row exists
+        r2 = client.post(f"/rosters/{rid}/edits", json={
+            "op": "set_symbol", "staff_id": "T002", "date": "2026-06-03",
+            "symbol": None, "expected_version": 1})
+        assert r2.status_code == 200
+        assert r2.json()["version"] == 2
+        assert _request_rows(conn, rid, "T002", "2026-06-03") == []  # cleared
+        cell = next(c for c in r2.json()["changed_cells"]
+                    if c["staff_id"] == "T002" and c["date"] == "2026-06-03")
+        assert cell["text"] == ""
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_set_symbol_undo_reverts(tmp_path):
+    conn, rid = _seed(tmp_path)
+    client = _client(conn)
+    try:
+        client.post(f"/rosters/{rid}/edits", json={
+            "op": "set_symbol", "staff_id": "T002", "date": "2026-06-03",
+            "symbol": "☆", "expected_version": 0})
+        assert _request_rows(conn, rid, "T002", "2026-06-03")  # present after set
+        r = client.post(f"/rosters/{rid}/undo", json={"expected_version": 1})
+        assert r.status_code == 200
+        assert _request_rows(conn, rid, "T002", "2026-06-03") == []  # reverted
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_set_symbol_stale_version_409(tmp_path):
+    conn, rid = _seed(tmp_path)
+    try:
+        r = _client(conn).post(f"/rosters/{rid}/edits", json={
+            "op": "set_symbol", "staff_id": "T002", "date": "2026-06-03",
+            "symbol": "☆", "expected_version": 99})
+        assert r.status_code == 409
+        assert "grid" in r.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()

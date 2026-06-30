@@ -275,6 +275,18 @@ def _mutate(conn, rid, op, payload, year, month):
                 "INSERT OR IGNORE INTO roster_assignments(roster_id,staff_id,date,kind,"
                 "location_or_role,locked) VALUES(?,?,?,'day',NULL,1)",
                 (rid, sid, payload["date"]))
+    elif op == "set_symbol":
+        # The request row (kind='request', location_or_role NULL) carries the cell's
+        # 申請 symbol. Replace it wholesale; an empty/None symbol clears the request.
+        iso = payload["date"]
+        sym = payload.get("symbol")
+        conn.execute("DELETE FROM roster_assignments WHERE roster_id=? AND staff_id=?"
+                     " AND date=? AND kind='request'", (rid, sid, iso))
+        if sym:
+            conn.execute(
+                "INSERT INTO roster_assignments(roster_id,staff_id,date,kind,"
+                "location_or_role,symbol,locked) VALUES(?,?,?,'request',NULL,?,0)",
+                (rid, sid, iso, sym))
 
 
 def _changed_cells(conn, rid, grid, cells, year, month):
