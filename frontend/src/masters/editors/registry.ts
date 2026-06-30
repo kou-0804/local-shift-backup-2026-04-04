@@ -8,6 +8,7 @@ import { SpecialRulesEditor } from './SpecialRulesEditor';
 import { TrainingEditor } from './TrainingEditor';
 import { NightQuotaEditor } from './NightQuotaEditor';
 import { NightSkillEditor } from './NightSkillEditor';
+import { RequestsImport } from './RequestsImport';
 
 export type EditorComponent = ComponentType<{ setId: number }>;
 
@@ -22,4 +23,5 @@ export const EDITOR_REGISTRY: Partial<Record<MasterKind, EditorComponent>> = {
   training: TrainingEditor,
   night_quota: NightQuotaEditor,
   night_overrides: NightSkillEditor,
+  requests: RequestsImport,
 };
