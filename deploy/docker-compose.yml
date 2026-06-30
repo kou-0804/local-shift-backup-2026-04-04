@@ -1,0 +1,32 @@
+# OPTIONAL — Docker is NOT the recommended Windows deployment path.
+#
+# Docker Desktop on Windows needs WSL2 + admin rights and is heavyweight for a
+# single-machine ward tool. The .bat + NSSM path (see start.bat / install_service.md)
+# is the recommended default. Use this compose file ONLY at sites that already run
+# Docker. It builds the SPA, then serves SPA + API from one uvicorn process,
+# persisting the SQLite DB + .auth_secret + archives in a named volume.
+#
+# Requires a deploy/Dockerfile (multi-stage: node build -> python runtime). Not
+# shipped here because the primary target is the native Windows process; add one
+# only if your site chooses the Docker path.
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: shift-scheduler:latest
+    ports:
+      - "8000:8000"          # expose only on the LAN; firewall/router scopes access
+    environment:
+      SHIFT_DB_PATH: /data/shift.db
+      SHIFT_FRONTEND_DIST: /app/frontend/dist
+      SHIFT_AUTH_SECRET_PATH: /data/.auth_secret
+      SHIFT_ADMIN_ID: admin
+      SHIFT_ADMIN_PW: changeme123   # change after first login
+    volumes:
+      - shift_data:/data            # DB + .auth_secret + archives survive restarts
+    restart: unless-stopped
+
+volumes:
+  shift_data:
