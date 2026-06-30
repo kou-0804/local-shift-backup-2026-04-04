@@ -14,6 +14,11 @@ export default defineConfig({
       // fall through to the SPA index.html and the master UI can never load data.
       '/masters': { target: 'http://localhost:8000', changeOrigin: true },
       '/master-sets': { target: 'http://localhost:8000', changeOrigin: true },
+      // Auth (P4) and confirmed-roster archives. Without these, /auth/login and
+      // /archives/* fall through to the SPA index.html in dev and break login +
+      // archives (prod single-origin serving is unaffected).
+      '/auth': { target: 'http://localhost:8000', changeOrigin: true },
+      '/archives': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
 });
