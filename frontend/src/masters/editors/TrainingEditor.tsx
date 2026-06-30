@@ -36,6 +36,14 @@ export function TrainingEditor({ setId }: { setId: number }) {
   const edit = (idx: number, patch: Partial<TrainingWire>) =>
     setDraft((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
 
+  // 保存はテキスト名（権威ソース）で行う。バックエンド replace_training は
+  // text からID・rank_a_only を再導出する（名前照合は部分一致で寛容）。
+  const toWire = (r: TrainingWire): TrainingWire => ({
+    ...r,
+    instructor_text: r.rank_a_only ? 'ランクA保持者' : r.instructor_ids.map(nameOf).join(', '),
+    trainee_text: r.trainee_ids.map(nameOf).join(', '),
+  });
+
   const toggleRankA = (idx: number) => {
     const r = draft[idx];
     if (!r.rank_a_only) edit(idx, { rank_a_only: true, instructor_ids: [] });
@@ -54,7 +62,7 @@ export function TrainingEditor({ setId }: { setId: number }) {
       }
       throw err;
     }
-    void mut.run(setId, (sid) => api.putTraining(sid, draft));
+    void mut.run(setId, (sid) => api.putTraining(sid, draft.map(toWire)));
   };
 
   return (

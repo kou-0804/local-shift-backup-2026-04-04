@@ -232,3 +232,61 @@
 .masters-page .night-skill-editor td[data-night='TRUE'] select { color: #15803d; }
 .masters-page .night-skill-editor td[data-night='FALSE'] { background: #fee2e2; }
 .masters-page .night-skill-editor td[data-night='FALSE'] select { color: #b91c1c; }
+
+/* ── エラーバウンダリ（あるタブが落ちた時の穏当な表示） ───────── */
+.masters-page .editor-error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+.masters-page .editor-error pre {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #b91c1c;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── 業務拡大（指導者/対象者ピッカー）の体裁 ─────────────── */
+.masters-page .training-rule {
+  border: 1px solid var(--ms-border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  background: #fcfdff;
+}
+.masters-page .training-rule legend {
+  font-weight: 700;
+  color: var(--ms-teal);
+  padding: 0 8px;
+}
+.masters-page .training-rule .instructors,
+.masters-page .training-rule .trainees {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  color: var(--ms-muted);
+}
+.masters-page .training-rule .chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.masters-page .training-rule .chip {
+  display: inline-block;
+  background: var(--ms-teal-weak);
+  color: var(--ms-teal);
+  border: 1px solid #99f6e4;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.masters-page .training-rule select[multiple] {
+  min-width: 220px;
+  min-height: 92px;
+}

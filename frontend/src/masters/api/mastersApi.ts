@@ -21,6 +21,7 @@ import type {
   StaffRow,
   TrainingWire,
 } from '../types';
+import { parseTrainingRow, type RawTrainingRow } from '../editors/transforms/training';
 
 /** Convert the display form `YYYY/MM` to the URL-safe path key `YYYY-MM`. */
 export const ymToPathKey = (ym: string): string => ym.replace('/', '-');
@@ -57,7 +58,11 @@ export const putSpecialRules = (set: number, rows: SpecialRuleWire[]) =>
   putJson<unknown>(`/masters/${set}/special_rules`, rows);
 
 // --- 業務拡大 (training, whole-array PUT) ------------------------------------
-export const getTraining = (set: number) => getJson<TrainingWire[]>(`/masters/${set}/training`);
+export const getTraining = async (set: number): Promise<TrainingWire[]> => {
+  // ms_training は *_ids_json(文字列)/rank_a_only(整数) を返すので配列＋真偽へ変換する。
+  const raw = await getJson<RawTrainingRow[]>(`/masters/${set}/training`);
+  return raw.map(parseTrainingRow);
+};
 export const putTraining = (set: number, rows: TrainingWire[]) =>
   putJson<unknown>(`/masters/${set}/training`, rows);
 

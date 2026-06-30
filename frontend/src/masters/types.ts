@@ -106,6 +106,10 @@ export interface TrainingWire {
   instructor_ids: string[];
   trainee_ids: string[];
   display_name: string;
+  /** 権威ソースのテキスト名（保存往復用）。GET時に保持し、保存時はこれを送る。
+   *  バックエンド replace_training は text からIDと rank_a_only を再導出する。 */
+  instructor_text?: string;
+  trainee_text?: string;
 }
 
 /** night_quota PUT/GET body row: {name, count, tech_id?} (name is the join key). */

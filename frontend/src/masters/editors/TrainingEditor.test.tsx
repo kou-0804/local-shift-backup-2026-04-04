@@ -45,4 +45,16 @@ describe('TrainingEditor', () => {
     const payload = put.mock.calls[0][1] as Array<{ rank_a_only: boolean; instructor_ids: string[] }>;
     expect(payload[0]).toMatchObject({ rank_a_only: true, instructor_ids: [] });
   });
+
+  it('saves authoritative instructor/trainee text rebuilt from ids (backend re-resolves)', async () => {
+    vi.spyOn(api, 'getTraining').mockResolvedValue(TRAIN as never);
+    vi.spyOn(api, 'listStaff').mockResolvedValue(STAFF as never);
+    const put = vi.spyOn(api, 'putTraining').mockResolvedValue({} as never);
+    renderEditor();
+    await screen.findAllByText(/指導/); // staff loaded → nameOf resolves ids to names (chip + option)
+    await userEvent.click(screen.getByTestId('train-save-病院MR'));
+    const payload = put.mock.calls[0][1] as Array<{ instructor_text?: string; trainee_text?: string }>;
+    expect(payload[0].instructor_text).toBe('指導　太郎');
+    expect(payload[0].trainee_text).toBe('育成　花子');
+  });
 });

@@ -4,6 +4,7 @@ import { useMastersStore } from './store/mastersStore';
 import { MasterSetSelector } from './shell/MasterSetSelector';
 import { MasterNav, MASTER_LABEL } from './shell/MasterNav';
 import { SafetyGateBanner } from './shell/SafetyGateBanner';
+import { EditorErrorBoundary } from './shell/EditorErrorBoundary';
 import { EDITOR_REGISTRY } from './editors/registry';
 import type { MasterKind } from './types';
 import './masters.css';
@@ -57,7 +58,9 @@ export function MastersPage() {
       <MasterNav />
       <section className="master-editor" role="tabpanel">
         {selectedSetId != null ? (
-          <EditorRegion master={selectedMaster} setId={selectedSetId} />
+          <EditorErrorBoundary resetKey={selectedMaster}>
+            <EditorRegion master={selectedMaster} setId={selectedSetId} />
+          </EditorErrorBoundary>
         ) : (
           <p>マスターセットを選択してください。</p>
         )}

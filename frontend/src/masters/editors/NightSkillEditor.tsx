@@ -15,7 +15,8 @@ import type { NightOverrideRow, Rank, Tri } from '../types';
  *    night_mr    = max(rank('病院MR'), rank('CLMR')) >= B
  *    night_angio = rank('ア') >= B
  *    night_cath  = rank('心') >= B
- *  ※ 保存(PUT)の生値・materialize 経路は不変＝Excel/Power Apps 往復のバイト同一性を保つ。 */
+ *  ※ 保存(PUT)の生値・materialize 経路は不変＝Excel/Power Apps 往復のバイト同一性を保つ。
+ *  ※ 行の同一性は配列インデックスで持つ（tech_id 空/重複の行でも状態が衝突しない）。 */
 const NIGHT_OPTS: { value: 'TRUE' | 'FALSE'; label: string }[] = [
   { value: 'TRUE', label: '夜勤可' },
   { value: 'FALSE', label: '夜勤不可' },
@@ -50,11 +51,11 @@ export function NightSkillEditor({ setId }: { setId: number }) {
         cellsByTech[s.tech_id] = s.cells;
       });
       const map: Record<string, Tri> = {};
-      data.forEach((r) => {
+      data.forEach((r, i) => {
         FIELDS.forEach((f) => {
           const raw = r[f.key];
           // 明示値(TRUE/FALSE)はそのまま、空欄はスキルマスタから派生して2状態に解決。
-          map[`${r.tech_id}:${f.key}`] =
+          map[`${i}:${f.key}`] =
             raw === 'TRUE' || raw === 'FALSE' ? raw : deriveNight(cellsByTech[r.tech_id], f.key);
         });
       });
@@ -64,13 +65,13 @@ export function NightSkillEditor({ setId }: { setId: number }) {
   }, [ready, data, skill]);
 
   const rows = data ?? [];
-  const triOf = (techId: string, key: string): Tri => draft[`${techId}:${key}`] ?? 'FALSE';
+  const triOf = (i: number, key: string): Tri => draft[`${i}:${key}`] ?? 'FALSE';
 
-  const toWireRow = (r: NightOverrideRow): NightOverrideRow => ({
+  const toWireRow = (r: NightOverrideRow, i: number): NightOverrideRow => ({
     ...r,
-    night_mr: triToWire(triOf(r.tech_id, 'night_mr')),
-    night_cath: triToWire(triOf(r.tech_id, 'night_cath')),
-    night_angio: triToWire(triOf(r.tech_id, 'night_angio')),
+    night_mr: triToWire(triOf(i, 'night_mr')),
+    night_cath: triToWire(triOf(i, 'night_cath')),
+    night_angio: triToWire(triOf(i, 'night_angio')),
   });
 
   const save = () => {
@@ -99,16 +100,16 @@ export function NightSkillEditor({ setId }: { setId: number }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.tech_id}>
+          {rows.map((r, i) => (
+            <tr key={i}>
               <td>{r.sname}</td>
               {FIELDS.map((f) => (
-                <td key={f.key} data-night={triOf(r.tech_id, f.key)}>
+                <td key={f.key} data-night={triOf(i, f.key)}>
                   <select
                     data-testid={`ns-${f.testid}-${r.tech_id}`}
-                    value={triOf(r.tech_id, f.key)}
+                    value={triOf(i, f.key)}
                     onChange={(e) =>
-                      setDraft((d) => ({ ...d, [`${r.tech_id}:${f.key}`]: e.target.value as Tri }))
+                      setDraft((d) => ({ ...d, [`${i}:${f.key}`]: e.target.value as Tri }))
                     }
                   >
                     {NIGHT_OPTS.map((o) => (
