@@ -47,6 +47,32 @@ function extractConflictDetail(parsed: unknown): WireConflictDetail {
   return { version: 0 };
 }
 
+/** The custom backend ValidationError envelope: HTTP 422 `{ detail: { field?, message } }`. */
+export interface ServerValidationDetail {
+  field?: string;
+  message: string;
+}
+
+/** Thrown on HTTP 422. Carries the backend `detail` so the UI can render the
+ *  field + JP message inline (never swallowed). */
+export class ServerValidationError extends Error {
+  constructor(public detail: ServerValidationDetail) {
+    super(detail.message);
+    this.name = 'ServerValidationError';
+  }
+}
+
+/** Shared non-2xx handler for the master API verbs: 422 → ServerValidationError,
+ *  any other non-ok → ApiError. Reads (getJson) keep their own simpler path. */
+async function check(res: Response, path: string): Promise<Response> {
+  if (res.status === 422) {
+    const body = (await readJson(res)) as { detail?: ServerValidationDetail };
+    throw new ServerValidationError(body.detail ?? { message: `422 ${path}` });
+  }
+  if (!res.ok) throw new ApiError(res.status, `${res.status} ${path}`);
+  return res;
+}
+
 export async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
@@ -54,8 +80,32 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (res.status === 409) throw new ConflictError(extractConflictDetail(await readJson(res)));
-  if (!res.ok) throw new ApiError(res.status, `${res.status} ${path}`);
-  return res.json() as Promise<T>;
+  return (await check(res, path)).json() as Promise<T>;
+}
+
+export async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return (await check(res, path)).json() as Promise<T>;
+}
+
+export async function delJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' });
+  return (await check(res, path)).json() as Promise<T>;
+}
+
+/** POST raw bytes (e.g. the 予定申請 CSV) — the body is the file content itself,
+ *  NOT multipart/form-data. The backend reads `request.body()` directly. */
+export async function postRaw<T>(path: string, body: BodyInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'text/csv' },
+    body,
+  });
+  return (await check(res, path)).json() as Promise<T>;
 }
 
 export async function getJson<T>(path: string): Promise<T> {
