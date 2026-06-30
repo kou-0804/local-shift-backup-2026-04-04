@@ -34,7 +34,7 @@
   width: 104px;
 }
 .col-day {
-  width: 52px;
+  width: 58px;
 }
 .col-stat {
   width: 42px;
@@ -126,6 +126,8 @@
 .day-cell {
   cursor: pointer;
   font-size: 11px; /* fit the common codes inside the uniform day column */
+  padding: 0 2px; /* tighter than the shared 0 3px so 病院MR夜 etc. fit in full */
+  letter-spacing: -0.1px;
 }
 
 .lock-badge {

@@ -35,6 +35,7 @@ export function DayCell({ staffId, cell, onClick, highlighted, heatColor }: Prop
       data-testid={`cell-${staffId}-${day}`}
       className="day-cell"
       style={style}
+      title={cell?.text || undefined}
       onClick={() => onClick({ staffId, day })}
     >
       {cell?.locked && (

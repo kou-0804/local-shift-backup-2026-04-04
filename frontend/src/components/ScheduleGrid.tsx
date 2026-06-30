@@ -20,7 +20,7 @@ interface Props {
 // (with width:auto the browser falls back to uneven content-based columns).
 const COL_NUM = 34;
 const COL_NAME = 104;
-const COL_DAY = 52;
+const COL_DAY = 58;
 const COL_STAT = 42;
 
 // Weekend/holiday class for a given day column.
