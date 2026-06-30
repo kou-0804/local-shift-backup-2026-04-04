@@ -1,0 +1,4 @@
+# Windows deploy scripts must be CRLF so cmd.exe parses them correctly,
+# regardless of the OS the commit was authored on.
+*.bat text eol=crlf
+*.cmd text eol=crlf
