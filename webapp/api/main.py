@@ -9,6 +9,7 @@ from webapp.api.db import get_db
 from webapp.api.jobs import JobStore, run_job_materialized
 from webapp.api import rosters as roster_ops
 from webapp.api.masters.routes import router as masters_router, sets_router as master_sets_router
+from webapp.api.auth.routes import router as auth_router
 from webapp.api.static import mount_spa
 from shift_scheduler.src.excel_directiona import render_directiona
 from main import run_schedule
@@ -18,6 +19,7 @@ store = JobStore()
 RUNNER = run_schedule  # indirection so tests can monkeypatch a fast fake
 app.include_router(masters_router)
 app.include_router(master_sets_router)
+app.include_router(auth_router)
 
 
 class JobRequest(BaseModel):
