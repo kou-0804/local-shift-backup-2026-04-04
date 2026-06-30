@@ -10,6 +10,10 @@ export default defineConfig({
     proxy: {
       '/rosters': { target: 'http://localhost:8000', changeOrigin: true },
       '/jobs': { target: 'http://localhost:8000', changeOrigin: true },
+      // Master-management API (P3). Without these, GET /master-sets and /masters/*
+      // fall through to the SPA index.html and the master UI can never load data.
+      '/masters': { target: 'http://localhost:8000', changeOrigin: true },
+      '/master-sets': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
 });
