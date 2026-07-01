@@ -52,17 +52,17 @@ def test_assign_updates_cell_and_version(tmp_path):
         app.dependency_overrides.clear()
 
 
-def test_unassign_raises_off(tmp_path):
+def test_unassign_does_not_inflate_off_beyond_target(tmp_path):
+    # 2026-07 policy: surplus idle days stay BLANK and are NOT counted as 公休.
+    # T001 is already at the target (9), so unassigning a work day turns it into a
+    # surplus blank and 公休 stays capped at 9 (it does not climb to 10+).
     conn, rid = _seed(tmp_path)
     try:
-        before = conn.execute(
-            "SELECT off_count FROM roster_meta WHERE roster_id=? AND staff_id='T001'",
-            (rid,)).fetchone()["off_count"]
         r = _client(conn).post(f"/rosters/{rid}/edits", json={
             "op": "unassign", "staff_id": "T001", "date": "2026-06-02",
             "location": "ク", "expected_version": 0})
         assert r.status_code == 200
-        assert r.json()["stats"]["T001"]["公休"] > before  # blank weekday = rest
+        assert r.json()["stats"]["T001"]["公休"] == 9  # capped at target, not >9
     finally:
         app.dependency_overrides.clear()
 
@@ -155,10 +155,11 @@ def test_set_symbol_sets_cell_and_version(tmp_path):
         app.dependency_overrides.clear()
 
 
-def test_set_symbol_recomputes_off(tmp_path):
-    # T001 works CT on day 1. A pure-holiday symbol reclassifies that day as off,
-    # so 公休 rises by exactly 1; clearing it reverts to work. Proves the symbol
-    # drives the off/代休 recompute (T001 has_work -> stats present).
+def test_set_symbol_off_capped_when_at_target(tmp_path):
+    # 2026-07 policy: for a person already at the target (9) with surplus blank
+    # capacity, relabelling a work day as an explicit holiday only displaces a
+    # would-be-counted blank, so 公休 stays capped at 9. The recompute still runs
+    # (stats present) and honors the cap; explicit leave BEYOND target would count.
     conn, rid = _seed(tmp_path)
     client = _client(conn)
     try:
@@ -172,7 +173,7 @@ def test_set_symbol_recomputes_off(tmp_path):
             "symbol": None, "expected_version": 1})
         assert r2.status_code == 200
         off_work = r2.json()["stats"]["T001"]["公休"]
-        assert off_holiday == off_work + 1.0
+        assert off_holiday == off_work == 9  # both capped at target
     finally:
         app.dependency_overrides.clear()
 

@@ -70,17 +70,24 @@ def recompute_off_daikyu(day_assignments, night_assignments, requests,
     num_days = calendar.monthrange(year, month)[1]
     off_counts, daikyu_counts = {}, {}
     for sid in staff_ids:
-        off = 0.0
+        explicit_off = 0.0   # 明示公休(★☆/日祝) or 付与済み '休' マーカー
+        half = 0
+        blank = 0
         for dnum in range(1, num_days + 1):
             d = date(year, month, dnum)
             status = _classify(sid, d, dnum, day_assignments, night_assignments, requests)
             if status == 'off':
-                off += 1.0
+                explicit_off += 1.0
             elif status == 'half':
-                off += 0.5
+                half += 1
             elif status == 'blank':
-                off += 1.0   # unassigned weekday = effective rest (off_contrib=1.0)
+                blank += 1
             # 'work' contributes 0
+        # 余剰の空欄は公休に数えない: 規定 target へ到達する分の blank のみカウントする
+        # （main.py assign_monthly_off_days の blanks_quota と同一ロジックで整合）。
+        # ユーザー方針(2026-07): 規定人数充足で不要な日は '休' を付けず空欄＝公休外。
+        blanks_counted = min(blank, max(0, target_holidays - explicit_off))
+        off = explicit_off + blanks_counted + 0.5 * half
         off_counts[sid] = off
         dk = max(0.0, target_holidays - off)
         daikyu_counts[sid] = dk

@@ -499,18 +499,29 @@ def test_conflicting_lock_reports_offending_cells():
 def test_night_force_occupancy_and_no_day_domain_leak():
     """Task 5: a '夜'-domain force adds night occupancy; a same-day day-domain force
     must NOT leak into the night model."""
-    nt = _pick_night(); assert nt, "no night-force cell derivable"
-    D, Sn = nt
     # a day-domain force on the SAME day: a staff working a GENERAL loc that day who
     # is NOT in the golden night set (so the night re-solve can't legitimately pull
     # them in — any night appearance would be a day-domain leak).
+    # NB: _pick_night's FIRST candidate day may have a GENERAL roster that is entirely
+    # night-capable (no leak-probe Sd), so iterate over candidate days until one yields
+    # BOTH a night-force Sn and a leak-probe Sd (this golden has 14 such days).
     night_union = set().union(*[set(v) for v in _GNIGHT.values()]) if _GNIGHT else set()
-    day_map = _staff_loc_on(D)
-    Sd = next((s for s, l in sorted(day_map.items())
-               if l in _GENERAL and s != Sn and s not in _AVOID and s not in night_union),
-              None)
-    assert Sd, "no day-domain leak-probe staff derivable"
-    Ld = day_map[Sd]
+    picked, excl = None, ()
+    while True:
+        nt = _pick_night(exclude=excl)
+        if not nt:
+            break
+        D, Sn = nt
+        day_map = _staff_loc_on(D)
+        Sd = next((s for s, l in sorted(day_map.items())
+                   if l in _GENERAL and s != Sn and s not in _AVOID and s not in night_union),
+                  None)
+        if Sd:
+            picked = (D, Sn, Sd, day_map[Sd])
+            break
+        excl = excl + (D,)
+    assert picked, "no (night-force day, day-domain leak-probe) pair derivable from golden"
+    D, Sn, Sd, Ld = picked
     la = {date(2026, 6, D): {"force": {(Sn, "夜"), (Sd, Ld)}, "forbid": set()}}
     r = run_schedule(2026, 6, data_dir=DATA_DIR, locked_assignments=la)
     # '夜'-domain force adds night occupancy.

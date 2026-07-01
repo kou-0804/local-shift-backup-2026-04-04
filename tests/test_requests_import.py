@@ -50,6 +50,32 @@ def test_store_keeps_raw_bytes_for_byte_exact_materialize():
     assert bytes(stored) == raw                      # verbatim -> 予定申請_202606.csv byte-exact
 
 
+def test_reimport_same_month_overwrites_previous():
+    """2026-07 policy: re-importing the same month REPLACES the prior import (no
+    accumulation). Exactly one requests_import row remains — the newest — and the
+    old import's request_row children are gone."""
+    c = _mem()
+    n2i = {"矢野　昌男": "T003"}
+    raw1 = "HolidaySymbol,PPPDate,RSName\r\n◆,2026/08/01,03 矢野　昌男\r\n".encode("utf-8")
+    raw2 = ("HolidaySymbol,PPPDate,RSName\r\n☆,2026/08/05,03 矢野　昌男\r\n"
+            "◆,2026/08/06,03 矢野　昌男\r\n").encode("utf-8")
+    id1 = store_requests(c, year=2026, month=8, raw=raw1,
+                         source_filename="a.csv", imported_by="t", name_to_id=n2i)
+    id2 = store_requests(c, year=2026, month=8, raw=raw2,
+                         source_filename="b.csv", imported_by="t", name_to_id=n2i)
+    rows = c.execute("SELECT id, source_filename FROM requests_import "
+                     "WHERE year_month='2026-08'").fetchall()
+    assert len(rows) == 1                     # overwrite, not accumulate
+    assert rows[0]["source_filename"] == "b.csv"   # newest content kept
+    kept_id = rows[0]["id"]
+    assert c.execute("SELECT COUNT(*) n FROM request_row WHERE import_id=?",
+                     (kept_id,)).fetchone()["n"] == 2     # exactly raw2's 2 rows
+    # no orphan children left pointing at a now-deleted import (sqlite rowid may be
+    # reused when the table empties, so assert across all imports rather than by id).
+    assert c.execute("SELECT COUNT(*) n FROM request_row WHERE import_id NOT IN "
+                     "(SELECT id FROM requests_import)").fetchone()["n"] == 0
+
+
 def test_preview_accepts_tab_separated_paste():
     """Power Apps copies the table as TSV; preview must parse it like the comma CSV."""
     tsv = (

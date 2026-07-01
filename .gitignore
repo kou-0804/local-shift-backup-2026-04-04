@@ -20,3 +20,12 @@ output/
 .DS_Store
 .AppleDouble
 .LSOverride
+
+# Web app runtime data (SQLite DB + secrets) — NEVER commit (contains masters/rosters + auth secret)
+webapp_data/
+*.db
+*.db-journal
+.auth_secret
+
+# Scratch / temp working files
+scratch/

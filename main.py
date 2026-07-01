@@ -146,10 +146,23 @@ def assign_monthly_off_days(
             print(f"  (i) {s.id}({getattr(s, 'name', s.id)}): "
                   f"固定公休({explicit_off}日)が目標({target_holidays}日)を超過しています。", flush=True)
 
-        # ── Phase 1: 全 blank 日を '休' に変換して可視化 ──────────
-        # 未割当平日は実質的な公休なので、Excel で空白にせず全て '休' マーカーを付与する。
-        # quota による制限を撤廃し、blank は全件変換してカウントに含める。
-        for dn in blank_days:
+        # ── Phase 1: 不足分の blank だけ '休' に変換（規定公休へ到達する分のみ）──
+        # ユーザー方針(2026-07): 規定人数を満たし不要な日に「余計な休み」を付けるより、
+        # 空欄のまま残す。既に計算済みの blanks_quota(= max(0, target - explicit_off)) 個
+        # だけを月内に分散して '休' 化し、余剰 blank は空欄（未割当・公休カウント外）とする。
+        # ※ '休' でも空欄でも「非勤務」なので 6連勤カウントには等価（どちらも連勤を切る）。
+        half_days = [dn for dn, v in status.items() if v == 'half']
+        n_convert = min(len(blank_days), blanks_quota)
+        converted = []
+        remaining = list(blank_days)
+        for _ in range(n_convert):
+            if not remaining:
+                break
+            best = _pick_best_day(remaining, status)   # 既存の公休/'休' から最も遠い日を選ぶ
+            converted.append(best)
+            remaining.remove(best)
+            status[best] = 'off'                        # 次の距離計算へ反映（分散維持）
+        for dn in sorted(converted):
             d_obj = date(year, month, dn)
             additional_holidays.append(DayAssignment(
                 date=d_obj, staff_id=s.id, location_code='休', rank=SkillRank.NONE,
@@ -157,10 +170,9 @@ def assign_monthly_off_days(
             day_assign_map[(s.id, dn)] = '休'
 
         # ── Step 3: 公休数・代休数を確定 ──────────────────────────
-        # 全 blank 日を含めて公休数を計算する（空白セルも実態として公休）
-        # 半休（出/☆）は 0.5 日としてカウント
-        half_days = [dn for dn, v in status.items() if v == 'half']
-        actual_off = explicit_off + len(blank_days) + 0.5 * len(half_days)
+        # 公休 = 明示公休 + 実際に付与した '休'(converted) + 0.5×半休。
+        # 余剰の空欄は公休に数えない（規定 target で頭打ち）。
+        actual_off = explicit_off + len(converted) + 0.5 * len(half_days)
         off_counts[s.id] = actual_off
 
         deficit = target_holidays - actual_off
@@ -672,7 +684,7 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                         if sum(1 for sid in loc_roster[(d, L)]
                                if sid != U.id and skill_of(sid, L).value > SkillRank.D.value) < 1:
                             continue
-                    if gender_only.get(L) == '女性のみ' and O.gender.value == '男':
+                    if gender_only.get(L) in ('female', '女性のみ') and O.gender.value == '男':
                         continue
                     # 夜勤明け後の休み優先(ソフト): O が d-2 に夜勤＝当日 d は「明けの翌日」。
                     # その日に日勤を移すと明け後の休みが潰れるため、移動先から除外して保護する。
@@ -739,7 +751,7 @@ def rebalance_workload(day_result_list, technicians, skills, locations, requests
                     if skill_of(O.id, L) == SkillRank.D:
                         if sum(1 for sid in loc_roster[(d, L)] if sid != U.id and skill_of(sid, L).value > SkillRank.D.value) < 1:
                             continue
-                    if gender_only.get(L) == '女性のみ' and O.gender.value == '男':
+                    if gender_only.get(L) in ('female', '女性のみ') and O.gender.value == '男':
                         continue
                     # 夜勤明け後の休み優先(完全保護): O が d-2 に夜勤＝当日 d は明けの翌日。
                     # 明け後の休みを守るため、モップアップ(代休撲滅の最終手段)でもこの日には
@@ -933,7 +945,7 @@ def optimize_assignments_cpsat(day_result_list, technicians, skills, locations, 
         cands = [s for s in active
                  if qualifies(s.id, L) and not is_fixed_day(s.id, d)
                  and not night_map.get((s.id, d - timedelta(days=2)))  # 夜勤明け後の休みを保護(候補から除外)
-                 and not (gender_only.get(L) == '女性のみ' and s.gender.value == '男')]
+                 and not (gender_only.get(L) in ('female', '女性のみ') and s.gender.value == '男')]
         cand_by_slot[(d, L)] = cands
         for s in cands:
             y[(s.id, d, L)] = model.NewBoolVar(f'y_{s.id}_{d.day}_{L}')
@@ -1302,6 +1314,24 @@ def run_schedule(year: int, month: int, data_dir: str = "shift_scheduler/data",
             del day_assignments_dict[_d]['ク']
         day_assignments_dict[_d].setdefault('クL', []).append(_leader)
         _kl_counts[_leader] = _kl_counts.get(_leader, 0) + 1
+
+    # ── 実質コンプライアンス検査（solver-free）──
+    # 「エラーなし＝条件充足」ではない: 必要人数/ランク下限/特殊曜日ルール等はモデル内で
+    # ソフト化されており、既存 validation_errors は人数しか見ない。ここで最終スケジュールを
+    # ルールに照らして再検証し、未達を正直に列挙する（レポートのみ・配置は一切変更しない）。
+    try:
+        from shift_scheduler.src.compliance_checker import check_compliance, format_report
+        compliance = check_compliance(
+            year=year, month=month, technicians=technicians, skills=skills,
+            locations=locations, pb_rules=pb_rules,
+            day_assignments=day_assignments_dict,
+            night_assignments=night_assignments_dict,
+            requests=requests_dict, daily_location_needs=daily_location_needs,
+            target_holidays=target_holidays)
+        print(format_report(compliance, target_holidays=target_holidays), flush=True)
+    except Exception as _cc_err:
+        compliance = []
+        print(f"  (i) コンプライアンス検査をスキップ: {_cc_err}", flush=True)
 
     # ── Excel（現行レイアウト）→ bytes、必要なら file ──
     generator = ExcelGenerator(

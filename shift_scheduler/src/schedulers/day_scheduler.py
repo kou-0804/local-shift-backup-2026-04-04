@@ -780,7 +780,7 @@ class DayScheduler:
                          continue
 
                 # DH-06: Gender
-                if loc.gender_constraint == '女性のみ' and s.gender.value == '男':
+                if loc.gender_constraint in ('female', '女性のみ') and s.gender.value == '男':
                     continue
                     
                 # DH-08,09,10: Late/MG Ban

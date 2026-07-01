@@ -132,10 +132,22 @@ def store_requests(conn, year: int, month: int, raw: bytes, source_filename: str
     _, has_bom, newline, trailing_newline = _decode(raw)
     pv = preview_requests(raw, name_to_id)
     imported_at = datetime.now().isoformat(timespec="seconds")
+    ym = f"{year}-{month:02d}"
+    # Overwrite semantics (user request 2026-07 + module docstring: "replaced by
+    # re-upload"): a re-import for the SAME month fully REPLACES the previous one
+    # instead of accumulating rows. Delete prior imports for this month (children
+    # first) so exactly the newest import remains. Safe: nothing references old
+    # import rows after generation/freeze (rosters key off master_set_id, and
+    # materialize reads the latest import blob by id).
+    old_ids = [r[0] for r in conn.execute(
+        "SELECT id FROM requests_import WHERE year_month=?", (ym,)).fetchall()]
+    for oid in old_ids:
+        conn.execute("DELETE FROM request_row WHERE import_id=?", (oid,))
+    conn.execute("DELETE FROM requests_import WHERE year_month=?", (ym,))
     cur = conn.execute(
         "INSERT INTO requests_import(year_month,source_filename,imported_at,imported_by,"
         "raw_blob,has_bom,newline,trailing_newline) VALUES(?,?,?,?,?,?,?,?)",
-        (f"{year}-{month:02d}", source_filename, imported_at, imported_by,
+        (ym, source_filename, imported_at, imported_by,
          sqlite3_blob(raw), int(has_bom), newline, int(trailing_newline)))
     imp_id = cur.lastrowid
     for row in pv["rows"]:
