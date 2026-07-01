@@ -1,0 +1,167 @@
+/* ------------------------------------------------------------------ *
+ * 勤務表 自動作成 page. Clinical palette, matching rosterIndex.css /
+ * auth.css (teal accent on slate).
+ * ------------------------------------------------------------------ */
+
+.create-page {
+  max-width: 620px;
+  margin: 28px auto;
+  padding: 0 16px 40px;
+}
+.create-title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.create-lead {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #64748b;
+}
+.create-card {
+  margin-bottom: 14px;
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+.create-h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+}
+.create-field {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.create-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+}
+.create-month {
+  display: flex;
+  gap: 8px;
+}
+.create-month select {
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+.create-month select:focus {
+  outline: none;
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+}
+.create-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 14px;
+}
+.create-status-key {
+  min-width: 130px;
+  font-weight: 600;
+  color: #475569;
+}
+.create-badge {
+  font-size: 13px;
+  font-weight: 600;
+}
+.create-badge.ok {
+  color: #0f766e;
+}
+.create-badge.warn {
+  color: #92400e;
+}
+.create-badge.danger {
+  color: #b91c1c;
+}
+.create-badge.neutral {
+  color: #64748b;
+}
+.create-badge a {
+  color: #0f766e;
+}
+.create-linkbtn {
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: #0f766e;
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.create-status-group {
+  display: flex;
+  flex-direction: column;
+}
+.create-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.create-hint.danger {
+  color: #b91c1c;
+}
+.create-btn {
+  width: 100%;
+  margin-top: 6px;
+  padding: 13px 16px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #0f766e;
+  border: 1px solid #0f766e;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.create-btn:hover:not(:disabled) {
+  background: #0d655e;
+}
+.create-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.create-progress {
+  margin-top: 16px;
+  padding: 14px 16px;
+  font-size: 14px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+.create-progress p {
+  margin: 0;
+}
+.create-error {
+  color: #b91c1c;
+  font-weight: 600;
+}
+.create-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border: 2px solid #99f6e4;
+  border-top-color: #0f766e;
+  border-radius: 50%;
+  animation: create-spin 0.8s linear infinite;
+}
+@keyframes create-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

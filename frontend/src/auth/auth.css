@@ -1,0 +1,123 @@
+/* ------------------------------------------------------------------ *
+ * Auth UI: login card + the authenticated top bar. Clinical palette,
+ * matching rosterIndex.css / masters.css (teal accent on slate).
+ * ------------------------------------------------------------------ */
+
+/* --- login screen ------------------------------------------------- */
+.login-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f8fafc;
+}
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  box-sizing: border-box;
+  padding: 28px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+.login-title {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.login-sub {
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: #64748b;
+}
+.login-field {
+  display: block;
+  margin-bottom: 14px;
+}
+.login-field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+.login-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  font-size: 14px;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+}
+.login-input:focus {
+  outline: none;
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.15);
+}
+.login-btn {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #0f766e;
+  border: 1px solid #0f766e;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.login-btn:hover:not(:disabled) {
+  background: #0d655e;
+}
+.login-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.login-error {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: #b91c1c;
+}
+
+/* --- authenticated top bar ---------------------------------------- */
+.auth-bar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 10px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+.auth-bar a {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f766e;
+  text-decoration: none;
+}
+.auth-bar a:hover {
+  text-decoration: underline;
+}
+.auth-spacer {
+  margin-left: auto;
+}
+.auth-user {
+  font-size: 13px;
+  color: #475569;
+}
+.auth-logout {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.auth-logout:hover {
+  background: #f1f5f9;
+}

@@ -29,6 +29,22 @@ def _day_of(iso):
     return int(iso.split('-')[2])
 
 
+def list_rosters(conn) -> list:
+    """Roster index for the picker (no ?rid= selected). Read-only header rows,
+    newest month first then newest-created so the top row is the likely target.
+    Deliberately does NOT build grids/stats — keep this listing cheap."""
+    rows = conn.execute(
+        "SELECT id, year, month, status, created_at, confirmed_at "
+        "FROM rosters ORDER BY year DESC, month DESC, created_at DESC, id DESC"
+    ).fetchall()
+    return [
+        {"id": r["id"], "year": r["year"], "month": r["month"],
+         "status": r["status"], "created_at": r["created_at"],
+         "confirmed_at": r["confirmed_at"]}
+        for r in rows
+    ]
+
+
 def freeze_roster(conn, *, job_id, result, technicians, data_dir,
                   target_holidays, created_by=None) -> int:
     """Map a ScheduleResult -> rows (synthesis §2.1). Idempotent per job_id."""

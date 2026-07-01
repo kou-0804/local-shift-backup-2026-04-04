@@ -118,6 +118,16 @@ export interface WireEditResponse {
   redo_available: boolean;
 }
 
+// GET /rosters → roster index rows for the picker (no grid; header fields only).
+export interface WireRosterSummary {
+  id: number;
+  year: number;
+  month: number;
+  status: 'draft' | 'confirmed';
+  created_at: string; // ISO "2026-06-30T06:36:50.483800+00:00"
+  confirmed_at: string | null;
+}
+
 // 409 body: FastAPI HTTPException → { detail: { version, grid, warnings } }
 // or { detail: { version, reason } } for nothing-to-undo/redo.
 export interface WireConflictDetail {

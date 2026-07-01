@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from webapp.api.db import get_db
 from webapp.api.auth.deps import current_user
-from webapp.api.requests_import import preview_requests, store_requests
+from webapp.api.requests_import import preview_requests, store_requests, requests_status
 from . import crud
 from .safety import LOAD_BEARING_IDS, SafetyError, assert_load_bearing_ids
 from .validation import ValidationError
@@ -54,6 +54,13 @@ async def requests_preview(request: Request,
                            conn=Depends(get_db)):
     raw = await request.body()
     return preview_requests(raw, _name_to_id(conn, master_set_id))
+
+
+@router.get("/requests/{year}/{month}")
+def requests_status_route(year: int, month: int, conn=Depends(get_db)):
+    """Read-only: latest 予定申請 import status for the month (admin|editor).
+    Lets the 勤務表作成 page show whether the CSV for the target month is loaded."""
+    return requests_status(conn, year, month)
 
 
 @router.post("/requests/{year}/{month}", status_code=201)

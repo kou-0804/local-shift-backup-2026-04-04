@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useAuth } from './useAuth';
 import { can } from './roles';
+import './auth.css';
 
 /**
  * Wraps the whole app. Until a session exists it renders a login form; once
@@ -33,53 +34,56 @@ export function LoginGate({ children }: { children: ReactNode }) {
       }
     };
     return (
-      <form aria-label="login" onSubmit={onSubmit} style={{ maxWidth: 320, margin: '4rem auto' }}>
-        <h1>勤務表システム ログイン</h1>
-        <label style={{ display: 'block', marginBottom: 8 }}>
-          ID
-          <input
-            name="login_id"
-            aria-label="ID"
-            value={loginId}
-            onChange={(e) => setLoginId(e.target.value)}
-            autoComplete="username"
-          />
-        </label>
-        <label style={{ display: 'block', marginBottom: 8 }}>
-          パスワード
-          <input
-            name="password"
-            aria-label="パスワード"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-        </label>
-        <button type="submit" disabled={submitting}>
-          ログイン
-        </button>
-        {error && (
-          <p role="alert" style={{ color: 'crimson' }}>
-            {error}
-          </p>
-        )}
-      </form>
+      <div className="login-wrap">
+        <form aria-label="login" className="login-card" onSubmit={onSubmit}>
+          <h1 className="login-title">勤務表システム</h1>
+          <p className="login-sub">ログインしてください</p>
+          <label className="login-field">
+            <span className="login-field-label">ID</span>
+            <input
+              className="login-input"
+              name="login_id"
+              aria-label="ID"
+              value={loginId}
+              onChange={(e) => setLoginId(e.target.value)}
+              autoComplete="username"
+            />
+          </label>
+          <label className="login-field">
+            <span className="login-field-label">パスワード</span>
+            <input
+              className="login-input"
+              name="password"
+              aria-label="パスワード"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
+          <button className="login-btn" type="submit" disabled={submitting}>
+            ログイン
+          </button>
+          {error && (
+            <p role="alert" className="login-error">
+              {error}
+            </p>
+          )}
+        </form>
+      </div>
     );
   }
 
   return (
     <div>
-      <header
-        className="auth-bar"
-        style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '6px 12px', borderBottom: '1px solid #ddd' }}
-      >
+      <header className="auth-bar">
         <a href="/">勤務表</a>
+        {can(role, 'generate') && <a href="/?view=create">勤務表作成</a>}
         {can(role, 'editMasters') && <a href="/?view=masters">マスタ管理</a>}
-        <span style={{ marginLeft: 'auto' }}>
+        <span className="auth-spacer auth-user">
           {user.name || user.login_id}（{role}）
         </span>
-        <button type="button" onClick={() => void logout()}>
+        <button type="button" className="auth-logout" onClick={() => void logout()}>
           ログアウト
         </button>
       </header>

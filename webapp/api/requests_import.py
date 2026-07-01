@@ -148,6 +148,24 @@ def store_requests(conn, year: int, month: int, raw: bytes, source_filename: str
     return imp_id
 
 
+def requests_status(conn, year: int, month: int) -> dict:
+    """Read-only 予定申請 import status for a month (year_month = 'YYYY-MM').
+    Powers the 勤務表作成 page so the user can see whether the CSV for the month
+    they are about to generate has been imported. Returns the LATEST import."""
+    row = conn.execute(
+        "SELECT id, source_filename, imported_at,"
+        " (SELECT COUNT(*) FROM request_row WHERE import_id=requests_import.id) AS row_count"
+        " FROM requests_import WHERE year_month=? ORDER BY id DESC LIMIT 1",
+        (f"{year}-{month:02d}",)).fetchone()
+    if row is None:
+        return {"year": year, "month": month, "imported": False,
+                "import_id": None, "row_count": 0,
+                "imported_at": None, "source_filename": None}
+    return {"year": year, "month": month, "imported": True,
+            "import_id": row["id"], "row_count": row["row_count"],
+            "imported_at": row["imported_at"], "source_filename": row["source_filename"]}
+
+
 def sqlite3_blob(raw: bytes):
     """Store bytes verbatim (sqlite3 BLOB)."""
     return memoryview(raw)

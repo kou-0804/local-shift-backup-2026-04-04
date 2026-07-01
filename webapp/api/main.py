@@ -106,6 +106,13 @@ def _roster_or_404(conn, rid):
         raise HTTPException(status_code=404, detail="roster not found")
 
 
+@app.get("/rosters", dependencies=[Depends(STAFF)])
+def list_rosters(conn=Depends(get_db)):
+    """Roster index for the SPA picker shown when no ?rid= is selected. Read-only
+    header listing (id/year/month/status/dates), newest month first."""
+    return roster_ops.list_rosters(conn)
+
+
 @app.get("/rosters/{rid}", dependencies=[Depends(STAFF)])
 def get_roster(rid: int, conn=Depends(get_db)):
     _roster_or_404(conn, rid)

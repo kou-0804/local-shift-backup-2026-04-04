@@ -5,3 +5,4 @@ export const queryClient = new QueryClient({
 });
 
 export const rosterKey = (rid: string) => ['roster', rid] as const;
+export const rosterListKey = ['rosters'] as const;
