@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loadByStaff, heatColorForCell } from './heatmap';
+import { loadByStaff, heatColorForCell, deviationColor } from './heatmap';
 import { normalizeGrid } from '../normalize/normalizeGrid';
 import { gridFixture } from '../test/fixtures';
 
@@ -17,6 +17,16 @@ describe('heatmap', () => {
   it('returns a load color on work cells in load mode', () => {
     const c = heatColorForCell('load', state, t13, 1);
     expect(c).toMatch(/^#/);
+  });
+  it('偏り: above-average → red, below-average → blue, near-average → light', () => {
+    const rOf = (hex: string) => parseInt(hex.slice(1, 3), 16);
+    const bOf = (hex: string) => parseInt(hex.slice(5, 7), 16);
+    const above = deviationColor(25, 20, 5); // +1 → red
+    const below = deviationColor(15, 20, 5); // -1 → blue
+    const near = deviationColor(20, 20, 5); // 0 → neutral
+    expect(rOf(above)).toBeGreaterThan(rOf(below)); // more red when above average
+    expect(bOf(below)).toBeGreaterThan(bOf(above)); // more blue when below average
+    expect(near.toLowerCase()).toBe('#f1f5f9'); // neutral at the mean
   });
   it('returns a shortfall color only where coverage warns that day/location in shortfall mode', () => {
     const s2 = {

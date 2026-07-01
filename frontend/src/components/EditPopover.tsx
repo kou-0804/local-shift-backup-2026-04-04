@@ -10,10 +10,22 @@ interface Props {
   statsColumns: string[];
   currentLocation?: string; // current assignment text, for toggle_lock location
   onEmit: (op: EditOp) => void;
+  // Assign the chosen location AND lock the cell in one step. The parent serialises
+  // the two edits (assign → toggle_lock) so the lock uses the post-assign version.
+  onAssignAndLock?: (staffId: string, date: string, location: string) => void;
   onClose: () => void;
 }
 
-export function EditPopover({ staffId, date, locked, statsColumns, currentLocation, onEmit, onClose }: Props) {
+export function EditPopover({
+  staffId,
+  date,
+  locked,
+  statsColumns,
+  currentLocation,
+  onEmit,
+  onAssignAndLock,
+  onClose,
+}: Props) {
   const [loc, setLoc] = useState('');
   const [sym, setSym] = useState('');
   const fire = (op: EditOp) => {
@@ -22,7 +34,8 @@ export function EditPopover({ staffId, date, locked, statsColumns, currentLocati
   };
 
   return (
-    <div className="edit-popover" role="dialog">
+    <div className="edit-popover" role="dialog" aria-label="セル編集">
+      <div className="edit-popover-title">セル編集：{staffId}（{date}）</div>
       <label>
         場所
         <select data-testid="loc-select" value={loc} onChange={(e) => setLoc(e.target.value)}>
@@ -40,6 +53,16 @@ export function EditPopover({ staffId, date, locked, statsColumns, currentLocati
         onClick={() => fire({ op: 'assign', staff_id: staffId, date, location: loc })}
       >
         配置
+      </button>
+      <button
+        data-testid="apply-assign-lock"
+        disabled={!loc || !onAssignAndLock}
+        onClick={() => {
+          onAssignAndLock?.(staffId, date, loc);
+          onClose();
+        }}
+      >
+        配置して固定
       </button>
       <button data-testid="apply-unassign" onClick={() => fire({ op: 'unassign', staff_id: staffId, date })}>
         解除

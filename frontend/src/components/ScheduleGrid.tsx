@@ -1,4 +1,4 @@
-import { DndContext, type DragEndEvent } from '@dnd-kit/core';
+import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import type { RosterState } from '../domain/model';
 import type { CellRef } from '../store/uiStore';
 import { useUiStore, cellKey } from '../store/uiStore';
@@ -36,10 +36,14 @@ function dayTint(state: RosterState, d: number): string {
 export function ScheduleGrid({ state, onCellClick, onDragEnd }: Props) {
   const days = Array.from({ length: state.daysInMonth }, (_, i) => i + 1);
   const { heatmapMode, highlighted } = useUiStore();
+  // Require a 6px drag before dnd-kit activates, otherwise micro-movements during a
+  // click get treated as a (zero-distance) drag and swallow the cell's onClick —
+  // which stops the edit popover from ever opening.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const tableWidth = COL_NUM + COL_NAME + days.length * COL_DAY + state.statsColumns.length * COL_STAT;
 
   return (
-    <DndContext onDragEnd={onDragEnd}>
+    <DndContext sensors={sensors} onDragEnd={onDragEnd}>
       <div className="grid-scroll">
         <table className="schedule-grid" style={{ width: tableWidth }}>
           <colgroup>

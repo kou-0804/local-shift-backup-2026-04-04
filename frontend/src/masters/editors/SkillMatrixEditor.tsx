@@ -43,6 +43,8 @@ export function SkillMatrixEditor({ setId }: { setId: number }) {
       <ValidationErrorList serverError={mut.serverError} />
       {nightNotice && <p role="note">{nightNotice}</p>}
       <AdvisoryWarnings warnings={mut.warnings} onDismiss={mut.reset} />
+      {/* Excel風の枠固定: 縦スクロールで見出し行、横スクロールで技師ID/氏名列を常時表示。 */}
+      <div className="skill-scroll">
       <table>
         <thead>
           <tr>
@@ -81,6 +83,7 @@ export function SkillMatrixEditor({ setId }: { setId: number }) {
           ))}
         </tbody>
       </table>
+      </div>
       <p className="note">
         スキル列（＝スケジュール対象場所）の追加・削除は管理者専用機能として別途対応します。
       </p>

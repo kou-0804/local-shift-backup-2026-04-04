@@ -57,10 +57,15 @@
 - 稼働中でも整合コピー可能。復旧時は `manifest.json` のチェックサムを検証。
 
 ## 更新（アップデート）手順
+**Mac で修正 → `git push` → この PC で `deploy\update.bat` を実行（管理者 cmd）**、が既定の流れ。
+`update.bat` が「サービス停止 → `git pull` → フロント再ビルド → 依存更新 → サービス再起動」を一括で行う。
+
+手動で行う場合の内訳:
 1. サービス停止（`net stop ShiftScheduler`）。
 2. コード更新（`git pull` またはビルド成果物のコピー）。
 3. `deploy\build_frontend.bat` 再実行。
-4. サービス再起動（`net start ShiftScheduler`）。
+4. 依存更新（`pip install -r webapp\requirements.txt`）。
+5. サービス再起動（`net start ShiftScheduler`）。
 
 ## TLS について（決定事項）
 v1 は院内 LAN の**平文 HTTP**前提（Cookie に `Secure` は付与しない）。IT が TLS を提供できる場合

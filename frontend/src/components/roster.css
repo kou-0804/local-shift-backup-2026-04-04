@@ -107,3 +107,151 @@
   font-size: 12px;
   color: #8a909c;
 }
+
+/* ── 再生成(ロック保持): 実行中オーバーレイ + 結果バナー ───────────── */
+.resolve-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.35);
+  z-index: 50;
+}
+.resolve-overlay-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 90vw;
+  padding: 16px 20px;
+  font-size: 14px;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.18);
+}
+.resolve-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #99f6e4;
+  border-top-color: #0f766e;
+  border-radius: 50%;
+  animation: resolve-spin 0.8s linear infinite;
+}
+@keyframes resolve-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.resolve-banner {
+  margin: 8px 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+.resolve-banner.notice {
+  color: #0f766e;
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+}
+.resolve-banner.error {
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+/* ── セル編集ポップオーバー: セルをクリックすると右下に浮かぶ編集カード ──
+ * これが無いと素のまま最下部に表示され、編集UIに気づけない。 */
+.edit-popover {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 60;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  width: min(460px, calc(100vw - 40px));
+  padding: 14px 16px;
+  font-size: 13px;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.22);
+}
+.edit-popover-title {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+}
+.edit-popover label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #475569;
+}
+.edit-popover select {
+  font-size: 13px;
+  padding: 5px 8px;
+  color: #0f172a;
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+}
+.edit-popover button {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.edit-popover button:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+.edit-popover button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 主要操作（配置 / 配置して固定）はティールで強調 */
+.edit-popover button[data-testid='apply-assign'],
+.edit-popover button[data-testid='apply-assign-lock'] {
+  color: #ffffff;
+  background: #0f766e;
+  border-color: #0f766e;
+}
+.edit-popover button[data-testid='apply-assign']:hover:not(:disabled),
+.edit-popover button[data-testid='apply-assign-lock']:hover:not(:disabled) {
+  background: #0d655e;
+}
+
+/* ── ヒートマップ: トグル + 凡例 ──────────────────────────── */
+.heatmap-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.heatmap-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: #64748b;
+}
+.heatmap-legend .hm-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.heatmap-legend .hm-sw {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid #cbd5e1;
+}

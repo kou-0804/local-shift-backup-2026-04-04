@@ -129,6 +129,11 @@
   padding: 0 2px; /* tighter than the shared 0 3px so 病院MR夜 etc. fit in full */
   letter-spacing: -0.1px;
 }
+/* クリックで編集できることが分かるホバー手がかり。 */
+.day-cell:hover {
+  outline: 2px solid #5eead4;
+  outline-offset: -2px;
+}
 
 .lock-badge {
   font-size: 9px;

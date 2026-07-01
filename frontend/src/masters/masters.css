@@ -179,6 +179,61 @@
   line-height: 1.6;
 }
 
+/* ── スキルマスタ: Excel風の枠固定（見出し行 + 技師ID/氏名列）────────
+ * 縦スクロール→見出し行(thead)が上に、横スクロール→技師ID・氏名列が左に
+ * 常時残る。スクロールは表を囲うコンテナ内で完結させる。 */
+.masters-page .skill-editor .skill-scroll {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--ms-border);
+  border-radius: 10px;
+}
+/* コンテナ側が枠線/角丸/クリップを担うので、内側のtableからは外す
+ * （table自身の overflow:hidden は sticky を閉じ込めて効かなくする）。 */
+.masters-page .skill-editor .skill-scroll table {
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+/* 見出し行はコンテナ上端に固定（既定の position:sticky; top:0 を活かしつつ
+ * 固定列より前面へ）。 */
+.masters-page .skill-editor thead th {
+  z-index: 2;
+}
+/* 技師ID列（1列目）を左端に固定。 */
+.masters-page .skill-editor thead th:nth-child(1),
+.masters-page .skill-editor tbody td:nth-child(1) {
+  position: sticky;
+  left: 0;
+  box-sizing: border-box;
+  width: 80px;
+  min-width: 80px;
+  z-index: 1;
+  background: #fff;
+}
+/* 氏名列（2列目）を技師ID列の右隣に固定（left = 1列目の幅）。 */
+.masters-page .skill-editor thead th:nth-child(2),
+.masters-page .skill-editor tbody td:nth-child(2) {
+  position: sticky;
+  left: 80px;
+  box-sizing: border-box;
+  width: 140px;
+  min-width: 140px;
+  z-index: 1;
+  background: #fff;
+}
+/* 左上の角（見出し×固定列）は全ての固定要素より前面に。 */
+.masters-page .skill-editor thead th:nth-child(1),
+.masters-page .skill-editor thead th:nth-child(2) {
+  z-index: 3;
+  background: #f1f5f9;
+}
+/* 固定列も行ホバー色を保ち、下のスキル列が透けないようにする。 */
+.masters-page .skill-editor tbody tr:hover td:nth-child(1),
+.masters-page .skill-editor tbody tr:hover td:nth-child(2) {
+  background: #fafcff;
+}
+
 /* ── スキルマスタ: ランク色分け（A〜D / -）────────────
  * 文字(A〜D)は残しつつセル背景＋文字色で習熟度を一目で。 */
 .masters-page .skill-editor td[data-rank] {

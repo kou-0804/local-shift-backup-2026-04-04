@@ -33,4 +33,16 @@ describe('EditPopover', () => {
     await userEvent.click(screen.getByTestId('toggle-lock'));
     expect(onEmit).toHaveBeenCalledWith({ op: 'toggle_lock', staff_id: 'T013', date: '2026-06-16', locked: true });
   });
+
+  it('配置して固定: assigns and locks in one step (needs a location)', async () => {
+    const onAssignAndLock = vi.fn();
+    render(
+      <EditPopover {...props} onEmit={() => {}} onAssignAndLock={onAssignAndLock} onClose={() => {}} />,
+    );
+    // disabled until a location is chosen
+    expect(screen.getByTestId('apply-assign-lock')).toBeDisabled();
+    await userEvent.selectOptions(screen.getByTestId('loc-select'), 'CT');
+    await userEvent.click(screen.getByTestId('apply-assign-lock'));
+    expect(onAssignAndLock).toHaveBeenCalledWith('T013', '2026-06-16', 'CT');
+  });
 });
